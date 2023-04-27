@@ -44,7 +44,7 @@ def build_time_intervals(time_range, tau_min, tau_max, base_log=2.):
     tau = time_range / np.float64(nbins)
     return tau, nbins
 
-def compute_occupation_probability_w_unc(
+def compute_occupation_probability(
         eq_timings,
         normalized_tau_min=0.01,
         normalized_tau_max=None,
@@ -56,6 +56,7 @@ def compute_occupation_probability_w_unc(
         shortest_resolved_interevent_time=5.,
         num_resamplings=10,
         leaveout_pct=5.,
+        interval_uncertainty_pct=5.
         ):
     """Compute the occupation probability
 
@@ -81,6 +82,7 @@ def compute_occupation_probability_w_unc(
         If None (default), `window_duration = max(eq_timings) - min(eq_timings)`.
     min_num_events : integer, optional
         The minimum number of events in order to compute the occupation probability.
+        Should be at least 2 to not produce an error.
     return_valid_only : boolean, optional
         If True (default), do not return the occupation probability for time bin sizes
         that are sufficiently small so that they contain at most one event. Below
@@ -102,6 +104,7 @@ def compute_occupation_probability_w_unc(
         times are normalized if `return_normalized_times=True`, that is, given
         in units of the average inter-event time.
     """
+    assert min_num_events >= 2, print("min_num_events should be at least 2!")
     if len(eq_timings) < min_num_events:
         print(f"Not enough events (only {len(eq_timings)})!")
         return
@@ -111,7 +114,8 @@ def compute_occupation_probability_w_unc(
     min_eq_timing, max_eq_timing = min(eq_timings), max(eq_timings)
     if window_duration is None:
         window_duration = max_eq_timing - min_eq_timing
-    average_rate = len(eq_timings) / window_duration
+    # average rate is taken as the inverse of the average interval
+    average_rate = (len(eq_timings) - 1) / window_duration
     average_waiting_time = 1. / average_rate
     #print(f"Average waiting time is: {average_waiting_time:.2f}")
     shortest_interval_size = normalized_tau_min * average_waiting_time
@@ -135,20 +139,12 @@ def compute_occupation_probability_w_unc(
         normalized_time_range, normalized_tau_min, normalized_tau_max, base_log=base_log
         )
     # -------------------------------
-    #  compare the fractal analysis with that performed
-    #  on  Poissonian catalog with same number of events
-    normalized_eq_timings_poisson = np.random.uniform(
-        0., window_duration / average_waiting_time, size=len(normalized_eq_timings)
-    )
     Phi = np.zeros(len(normalized_tau), dtype=np.float32)
-    Phi_std = np.zeros(len(normalized_tau), dtype=np.float32)
     Phi_lower = np.zeros(len(normalized_tau), dtype=np.float32)
     Phi_upper = np.zeros(len(normalized_tau), dtype=np.float32)
-    Phi_poisson = np.zeros(len(normalized_tau), dtype=np.float32)
-    Phi_std_poisson = np.zeros(len(normalized_tau), dtype=np.float32)
-    Phi_poisson_lower = np.zeros(len(normalized_tau), dtype=np.float32)
-    Phi_poisson_upper = np.zeros(len(normalized_tau), dtype=np.float32)
     valid = np.ones(len(normalized_tau), dtype=bool)
+    #wt = normalized_eq_timings[1:] - normalized_eq_timings[:-1]
+    #print(f"Average normalized waiting time is: {np.mean(wt):.2f}")
     for i in range(len(normalized_tau)):
         n_tau, _ = np.histogram(
                 normalized_eq_timings,
@@ -163,189 +159,32 @@ def compute_occupation_probability_w_unc(
             valid[i] = False
         occupied_bins = n_tau != 0
         Phi[i] = np.sum(occupied_bins) / np.float64(nbins[i])
-        n_tau_poisson, _ = np.histogram(
-            normalized_eq_timings_poisson,
-            bins=nbins[i], 
-            range=(min_normalized_eq_timing, max_normalized_eq_timing)
-        )
-        occupied_bins_poisson = n_tau_poisson != 0
-        Phi_poisson[i] = np.sum(occupied_bins_poisson) / np.float64(nbins[i])
         Phi_rsmpl = np.zeros(num_resamplings, dtype=np.float32)
-        Phi_poisson_rsmpl = np.zeros(num_resamplings, dtype=np.float32)
         for j in range(num_resamplings):
             num_keep = int((1. - leaveout_pct/100.) * len(n_tau))
             num_keep = max(1, num_keep)
             Phi_rsmpl[j] = (
                     np.sum(
-                        np.random.choice(occupied_bins, num_keep, replace=False)
+                        np.random.choice(occupied_bins, size=num_keep, replace=False)
                         )
                     /
                     float(num_keep)
                     )
-            Phi_poisson_rsmpl[j] = (
-                    np.sum(
-                        np.random.choice(occupied_bins_poisson, num_keep, replace=False)
-                        )
-                    /
-                    float(num_keep)
-                    )
-        Phi_std[i] = np.std(np.log10(Phi_rsmpl))
-        INTERVAL = 10.
-        Phi_lower[i] = np.percentile(Phi_rsmpl, INTERVAL / 2.)
-        Phi_upper[i] = np.percentile(Phi_rsmpl, 100. - INTERVAL / 2.)
-        Phi_std_poisson[i] = np.std(np.log10(Phi_poisson_rsmpl))
-        Phi_poisson_lower[i] = np.percentile(Phi_poisson_rsmpl, INTERVAL / 2.)
-        Phi_poisson_upper[i] = np.percentile(Phi_poisson_rsmpl, 100. - INTERVAL / 2.)
+        Phi_lower[i] = np.percentile(Phi_rsmpl, interval_uncertainty_pct / 2.)
+        Phi_upper[i] = np.percentile(Phi_rsmpl, 100. - interval_uncertainty_pct / 2.)
     if return_valid_only:
         # only keep non-trivial interval sizes
         # keep the largest time bins for which num_max == 1 happens for the 1st time
         if np.sum(~valid) > 0:
             valid[np.where(~valid)[0][-1]] = True 
         #valid[normalized_tau < shortest_resolved_interevent_time] = False
-        Phi, Phi_poisson, normalized_tau = Phi[valid], Phi_poisson[valid], normalized_tau[valid]
-        Phi_lower, Phi_upper = Phi_lower[valid], Phi_upper[valid]
-        Phi_poisson_lower, Phi_poisson_upper = Phi_poisson_lower[valid], Phi_poisson_upper[valid]
+        (Phi, Phi_lower, Phi_upper, normalized_tau) = (
+                Phi[valid], Phi_lower[valid], Phi_upper[valid], normalized_tau[valid]
+                )
     if return_normalized_times:
-        return (
-                Phi, Phi_lower, Phi_upper,
-                Phi_poisson, Phi_poisson_lower, Phi_poisson_upper,
-                normalized_tau
-                )
+        return Phi, Phi_lower, Phi_upper, normalized_tau
     else:
-        return (
-                Phi, Phi_lower, Phi_upper,
-                Phi_poisson, Phi_poisson_lower, Phi_poisson_upper,
-                normalized_tau * average_waiting_time
-                )
-
-
-def compute_occupation_probability(
-        eq_timings,
-        normalized_tau_min=0.01,
-        normalized_tau_max=None,
-        base_log=2,
-        return_normalized_times=True,
-        return_valid_only=True,
-        window_duration=None,
-        min_num_events=5,
-        shortest_resolved_interevent_time=5.
-        ):
-    """Compute the occupation probability
-
-    Parameters
-    ----------
-    eq_timings : numpy.ndarray
-        Earthquake timings, in arbitrary units (but, in general, seconds).
-    normalized_tau_min : float, optional
-        Smallest bin size in units of average inter-event time.
-        Default is 0.01.
-    normalized_tau_max : float, optional
-        Largest bin size in units of average inter-event time.
-        Default is None. If `None`, `normalized_tau_max = max_waiting_time / avg_waiting_time`.
-    base_log : float, optional
-        The time bin sizes are log-spaced using the log-`base_log` basis.
-        Default is 2.
-    return_normalized_times : boolean, optional
-        If True (default), returns the time bin sizes in units of the
-        average inter-event time. If False, the same units of `eq_timings`
-        are used.
-    window_duration : float, optional
-        The window duration used to calculate the average inter-event time.
-        If None (default), `window_duration = max(eq_timings) - min(eq_timings)`.
-    min_num_events : integer, optional
-        The minimum number of events in order to compute the occupation probability.
-    return_valid_only : boolean, optional
-        If True (default), do not return the occupation probability for time bin sizes
-        that are sufficiently small so that they contain at most one event. Below
-        this size, the occupation probability trivially decreases as `tau`.
-    shortest_resolved_interevent_time : scalar, optional
-        Shortest inter-event time resolved in the catalog, in units of
-        `eq_timings`. This number is used to issue a warning if
-        `normalized_tau_min` pushes the analysis below the resolution limit.
-
-    Returns
-    -------
-    Phi : numpy.ndarray
-        Observed occupation probability at the time bin sizes defined by `tau`.
-    Phi_poisson : numpy.ndarray
-        Occupation probability for a synthetic random earthquake sequence with
-        same average earthquake rate at the time bin sizes defined by `tau`.
-    tau : numpy.ndarray
-        Time bin sizes at which the occupation probability is computed. These
-        times are normalized if `return_normalized_times=True`, that is, given
-        in units of the average inter-event time.
-    """
-    if len(eq_timings) < min_num_events:
-        print(f"Not enough events (only {len(eq_timings)})!")
-        return
-    # measure the average seismicty rate
-    #eq_timings -= min(eq_timings)
-    eq_timings = eq_timings - min(eq_timings)
-    min_eq_timing, max_eq_timing = min(eq_timings), max(eq_timings)
-    if window_duration is None:
-        window_duration = max_eq_timing - min_eq_timing
-    average_rate = len(eq_timings) / window_duration
-    average_waiting_time = 1. / average_rate
-    #print(f"Average waiting time is: {average_waiting_time:.2f}")
-    shortest_interval_size = normalized_tau_min * average_waiting_time
-    print(f"Shortest time interval is {shortest_interval_size:.2f}sec")
-    if shortest_interval_size < shortest_resolved_interevent_time:
-        suggested_increase = (
-                shortest_resolved_interevent_time / shortest_interval_size
-                )
-        print("Warning! You are computing the occupation probability for"
-                " time intervals shorter than your shortest resolved "
-                "inter-event time. You should increase `normalized_tau_min`"
-                f" by a factor {suggested_increase:.2f}.")
-    normalized_eq_timings = eq_timings / average_waiting_time
-    min_normalized_eq_timing = min(normalized_eq_timings)
-    max_normalized_eq_timing = max(normalized_eq_timings)
-    # ----------------------------------
-    normalized_time_range = max_normalized_eq_timing - min_normalized_eq_timing
-    if normalized_tau_max is None:
-        normalized_tau_max = normalized_time_range
-    normalized_tau, nbins = build_time_intervals(
-        normalized_time_range, normalized_tau_min, normalized_tau_max, base_log=base_log
-        )
-    # -------------------------------
-    #  compare the fractal analysis with that performed
-    #  on  Poissonian catalog with same number of events
-    normalized_eq_timings_poisson = np.random.uniform(
-        0., window_duration / average_waiting_time, size=len(normalized_eq_timings)
-    )
-    Phi = np.zeros(len(normalized_tau), dtype=np.float32)
-    Phi_poisson = np.zeros(len(normalized_tau), dtype=np.float32)
-    valid = np.ones(len(normalized_tau), dtype=bool)
-    for i in range(len(normalized_tau)):
-        n_tau, _ = np.histogram(
-                normalized_eq_timings,
-                bins=nbins[i],
-                range=(min_normalized_eq_timing, max_normalized_eq_timing)
-                )
-        if n_tau.max() == 1:
-            # we reached the bin size when there is at most one 
-            # event per bin, for smaller bins, the occupation
-            # probability will trivially decrease a 1/tau
-            #print(f"Minimum relevant bin size: {normalized_tau[i]:.2e}")
-            valid[i] = False
-        Phi[i] = np.sum(n_tau != 0) / np.float64(nbins[i])
-        n_tau, _ = np.histogram(
-            normalized_eq_timings_poisson,
-            bins=nbins[i], 
-            range=(min_normalized_eq_timing, max_normalized_eq_timing)
-        )
-        Phi_poisson[i] = np.sum(n_tau != 0) / np.float64(nbins[i])
-    if return_valid_only:
-        # only keep non-trivial interval sizes
-        # keep the largest time bins for which num_max == 1 happens for the 1st time
-        if np.sum(~valid) > 0:
-            valid[np.where(~valid)[0][-1]] = True 
-        #valid[normalized_tau < shortest_resolved_interevent_time] = False
-        Phi, Phi_poisson, normalized_tau = Phi[valid], Phi_poisson[valid], normalized_tau[valid]
-    if return_normalized_times:
-        return Phi, Phi_poisson, normalized_tau
-    else:
-        return Phi, Phi_poisson, normalized_tau * average_waiting_time
+        return Phi, Phi_lower, Phi_upper, normalized_tau * average_waiting_time
 
 def compute_wt_pdf_from_occupation(tau, Phi, full_output=False):
     """
@@ -408,6 +247,9 @@ def occupation_analysis(
     verbose=1,
     return_figure=False,
     plot_above=1.0,
+    interval_uncertainty_pct=5.,
+    num_resamplings=10,
+    leaveout_pct=5.,
     **kwargs,
 ):
     """Compute the fractal dimension.
@@ -489,7 +331,8 @@ def occupation_analysis(
             if len(eq_timings) % num_windows < 0.25*n_events_per_window:
                 num_windows -= 1
             num_valid_windows = num_windows
-            multiwindow_Phi, multiwindow_Phi_poisson, multiwindow_tau = [], [], []
+            # initialize multi-window variables
+            mw_Phi, mw_Phi_lower, mw_Phi_upper, mw_tau = [], [], [], []
             idx0 = 0
             idx1 = n_events_per_window - 1
             earthquake_rate = np.zeros(num_windows, dtype=np.float32)
@@ -499,7 +342,7 @@ def occupation_analysis(
                 earthquake_rate[i] = len(eq_timings[idx0:idx1]) / window_duration
                 avg_waiting_time[i] = 1. / earthquake_rate[i]
                 window_normalized_tau_max = window_duration / avg_waiting_time[i]
-                multiwindow_Phi_i, multiwindow_Phi_poisson_i, multiwindow_tau_i = \
+                mw_Phi_i, mw_Phi_lower_i, mw_Phi_upper_i, multiwindow_tau_i = \
                         compute_occupation_probability(
                                 eq_timings[idx0:idx1],
                                 normalized_tau_min=normalized_tau_min,
@@ -507,12 +350,16 @@ def occupation_analysis(
                                 #normalized_tau_max=None,
                                 base_log=base_log,
                                 return_normalized_times=True,
-                                window_duration=window_duration,
-                                shortest_resolved_interevent_time=shortest_resolved_interevent_time
+                                #window_duration=window_duration,
+                                shortest_resolved_interevent_time=shortest_resolved_interevent_time,
+                                num_resamplings=num_resamplings,
+                                leaveout_pct=leaveout_pct,
+                                interval_uncertainty_pct=interval_uncertainty_pct
                                 )
-                multiwindow_Phi.append(multiwindow_Phi_i)
-                multiwindow_Phi_poisson.append(multiwindow_Phi_poisson_i)
-                multiwindow_tau.append(multiwindow_tau_i)
+                mw_Phi.append(mw_Phi_i)
+                mw_Phi_lower.append(mw_Phi_lower_i)
+                mw_Phi_upper.append(mw_Phi_upper_i)
+                mw_tau.append(mw_tau_i)
                 idx0 += n_events_per_window
                 idx1 += n_events_per_window
         elif window_mode == "physical_time":
@@ -531,7 +378,8 @@ def occupation_analysis(
             window_start_time = time_bins[:-1][valid_windows]
             earthquake_rate = ecn[valid_windows] / window_duration
             avg_waiting_time = 1. / earthquake_rate
-            multiwindow_Phi, multiwindow_Phi_poisson, multiwindow_tau = [], [], []
+            # initialize multi-window variables
+            mw_Phi, mw_Phi_lower, mw_Phi_upper, mw_tau = [], [], [], []
             num_valid_windows = np.sum(valid_windows)
             for i in range(num_valid_windows):
                 window_normalized_tau_max = window_duration / avg_waiting_time[i]
@@ -540,7 +388,7 @@ def occupation_analysis(
                         &
                         (eq_timings < window_start_time[i] + window_duration)
                         )]
-                multiwindow_Phi_i, multiwindow_Phi_poisson_i, multiwindow_tau_i = \
+                mw_Phi_i, mw_Phi_lower_i, mw_Phi_upper_i, multiwindow_tau_i = \
                         compute_occupation_probability(
                                 subset_eq_timings,
                                 normalized_tau_min=normalized_tau_min,
@@ -548,12 +396,16 @@ def occupation_analysis(
                                 #normalized_tau_max=None,
                                 base_log=base_log,
                                 return_normalized_times=True,
-                                window_duration=window_duration,
-                                shortest_resolved_interevent_time=shortest_resolved_interevent_time
+                                #window_duration=window_duration,
+                                shortest_resolved_interevent_time=shortest_resolved_interevent_time,
+                                num_resamplings=num_resamplings,
+                                leaveout_pct=leaveout_pct,
+                                interval_uncertainty_pct=interval_uncertainty_pct
                                 )
-                multiwindow_Phi.append(multiwindow_Phi_i)
-                multiwindow_Phi_poisson.append(multiwindow_Phi_poisson_i)
-                multiwindow_tau.append(multiwindow_tau_i)
+                mw_Phi.append(mw_Phi_i)
+                mw_Phi_lower.append(mw_Phi_lower_i)
+                mw_Phi_upper.append(mw_Phi_upper_i)
+                mw_tau.append(mw_tau_i)
         # here, we need to fix normalized_tau_max
         # the below definition will cause problems when the maximum
         # average waiting time is infinite or just very large
@@ -575,74 +427,59 @@ def occupation_analysis(
         # resample so that the tau's of all windows are the same
         new_shape = (num_valid_windows, len(normalized_tau))
         resampled_Phi = np.zeros(new_shape, dtype=np.float32)
-        resampled_Phi_poisson = np.zeros(new_shape, dtype=np.float32)
+        resampled_Phi_upper = np.zeros(new_shape, dtype=np.float32)
+        resampled_Phi_lower = np.zeros(new_shape, dtype=np.float32)
+        increasing_order = np.argsort(normalized_tau)
         for i in range(num_valid_windows):
             resampled_Phi[i, :] = np.exp(
                     np.interp(
-                        np.log(normalized_tau),
-                        np.log(multiwindow_tau[i][::-1]),
-                        np.log(multiwindow_Phi[i][::-1])
+                        np.log(normalized_tau[increasing_order]),
+                        np.log(mw_tau[i][increasing_order]),
+                        np.log(mw_Phi[i][increasing_order])
                         )
                     )
-            resampled_Phi_poisson[i, :] = np.exp(
+            resampled_Phi_lower[i, :] = np.exp(
                     np.interp(
-                        np.log(normalized_tau),
-                        np.log(multiwindow_tau[i][::-1]),
-                        np.log(multiwindow_Phi_poisson[i][::-1])
+                        np.log(normalized_tau[increasing_order]),
+                        np.log(mw_tau[i][increasing_order]),
+                        np.log(mw_Phi_lower[i][increasing_order])
+                        )
+                    )
+            resampled_Phi_upper[i, :] = np.exp(
+                    np.interp(
+                        np.log(normalized_tau[increasing_order]),
+                        np.log(mw_tau[i][increasing_order]),
+                        np.log(mw_Phi_upper[i][increasing_order])
                         )
                     )
         # stack them using the event rate as a weight
         weights = earthquake_rate / earthquake_rate.sum()
         Phi = np.sum(weights[:, None] * resampled_Phi, axis=0)
-        Phi_std = np.sqrt(
-                np.sum(weights[:, None] * (resampled_Phi - Phi)**2, axis=0)
-                )
-        Phi_poisson = np.sum(weights[:, None] * resampled_Phi_poisson, axis=0)
-        Phi_poisson_std = np.sqrt(
-                np.sum(weights[:, None] * (resampled_Phi_poisson - Phi_poisson)**2, axis=0)
-                )
+        Phi_lower = np.sum(weights[:, None] * resampled_Phi_lower, axis=0)
+        Phi_upper = np.sum(weights[:, None] * resampled_Phi_upper, axis=0)
     else:
         if window_duration is None:
             window_duration = eq_timings.max() - eq_timings.min()
         earthquake_rate = len(eq_timings) / window_duration
         avg_waiting_time = 1. / earthquake_rate
-        #Phi, Phi_poisson, normalized_tau = compute_occupation_probability(
-        #Phi, Phi_std, Phi_poisson, Phi_poisson_std, normalized_tau = \
-        Phi, Phi_lower, Phi_upper, Phi_poisson, Phi_poisson_lower, Phi_poisson_upper, normalized_tau = \
-                compute_occupation_probability_w_unc(
+        Phi, Phi_lower, Phi_upper, normalized_tau = compute_occupation_probability(
                     eq_timings,
                     normalized_tau_min=normalized_tau_min,
                     normalized_tau_max=normalized_tau_max,
                     base_log=base_log,
                     return_normalized_times=True,
                     window_duration=window_duration,
-                    shortest_resolved_interevent_time=shortest_resolved_interevent_time
+                    shortest_resolved_interevent_time=shortest_resolved_interevent_time,
+                    num_resamplings=num_resamplings,
+                    leaveout_pct=leaveout_pct,
+                    interval_uncertainty_pct=interval_uncertainty_pct
                 )
         Phi_std = np.zeros_like(Phi)
-        Phi_poisson_std = np.zeros_like(Phi_poisson)
-    #print(tau_min)
-    #if tau_min > 0.1 * average_waiting_time:
-    #    print("User-provided `tau_min` is too large given the seismicity rate!")
-    #    fractal_output = {
-    #        "fractal_dim": 0.0,
-    #        "log_tau_c": 0.0,
-    #        "rms": 1.0,
-    #        "fractal_dim_err": 1.0,
-    #    }
-    #    return 0.0, 0.0, fractal_output
     # use the expected average recurrence time
     # of the Poisson point process with same average rate
     # this is where the slope of a random time series breaks
     occupation_parameters = fit_occupation_probability(
         Phi,
-        normalized_tau,
-        normalized_tau_min,
-        tau_max=normalized_tau_max_fit,
-        model=model,
-        average_rate=1.,
-    )
-    occupation_parameters_poisson = fit_occupation_probability(
-        Phi_poisson,
         normalized_tau,
         normalized_tau_min,
         tau_max=normalized_tau_max_fit,
@@ -659,8 +496,7 @@ def occupation_analysis(
     else:
         tau = normalized_tau
         earthquake_rate = 1.
-    for attr in occupation_parameters_poisson:
-        occupation_parameters[f"{attr}_poisson"] = occupation_parameters_poisson[attr]
+    Phi_poisson = 1. - np.exp(-earthquake_rate * tau)
     if (occupation_parameters["fractal_dim"] > plot_above) or (ax is not None):
         if ax is None:
             fig = plt.figure(
@@ -733,7 +569,7 @@ def occupation_analysis(
             label=kwargs.get("label", "Observed"),
         )
         ax.fill_between(
-                tau, Phi - Phi_std, Phi + Phi_std, color=color, alpha=0.25
+                tau, Phi_lower, Phi_upper, color=color, alpha=0.25
                 )
         ax.plot(
             tau,
@@ -744,13 +580,6 @@ def occupation_analysis(
             alpha=0.66,
             label=kwargs.get("label_poisson", "Synthetic Poisson"),
         )
-        ax.fill_between(
-                tau,
-                Phi_poisson - Phi_poisson_std,
-                Phi_poisson + Phi_poisson_std,
-                color=color_poisson,
-                alpha=0.25
-                )
         ax.loglog()
         if return_normalized_times:
             ax.set_xlabel(r"Normalized time interval, $\lambda \tau$")
@@ -763,16 +592,14 @@ def occupation_analysis(
         Phi_poisson, Phi
     )
     if return_figure:
-        return tau, Phi, Phi_std, occupation_parameters, fig
+        return tau, Phi, Phi_lower, Phi_upper, occupation_parameters, fig
     else:
-        return tau, Phi, Phi_std, occupation_parameters
-    #if return_figure:
-    #    return tau, Phi, Phi_std, occupation_parameters, fig
-    #else:
-    #    return tau, Phi, Phi_std, Phi_lower, Phi_upper, occupation_parameters
+        return tau, Phi, Phi_lower, Phi_upper, occupation_parameters
 
 def lacunarity(eq_timings, bin_size, starttime=None, endtime=None):
     """Compute the lacunarity of an earthquake sequence.
+
+    WORK-IN-PROGRESS
     """
     if starttime is None:
         starttime = min(eq_timings)
@@ -781,74 +608,7 @@ def lacunarity(eq_timings, bin_size, starttime=None, endtime=None):
     bins = np.arange(starttime, endtime + 0.5*bin_size, bin_size)
     hist, _ = np.histogram(eq_timings, bins=bins)
     binary_hist = np.int32(hist > 0.)
-
-
-def linear_regression(x, y):
-    """
-    cf. https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.linregress.html
-
-    Returns
-    -------
-    a: slope
-    b: intercept
-    r_val: correlation coefficient, usually
-           people use the coefficient of determination
-           R**2 = r_val**2 to measure the quality of
-           the fit
-    p_val: two-sided p-value for a hypothesis test whose null
-           hypothesis is that the slope is zero
-    std_err: standard error of the estimated slope
-    """
-    from scipy.stats import linregress
-
-    a, b, r_val, p_val, std_err = linregress(x, y)
-    return a, b, r_val, p_val, std_err
-
-
-def weighted_linear_regression(X, Y, W=None):
-    """
-    Parameters
-    -----------
-    X: (n,) numpy array or list
-    Y: (n,) numpy array or list
-    W: default to None, (n,) numpy array or list
-
-    Returns
-    --------
-    best_slope: scalar float,
-        Best slope from the least square formula
-    best_intercept: scalar float,
-        Best intercept from the least square formula
-    std_err: scalar float,
-        Error on the slope
-    """
-    X = np.asarray(X)
-    if W is None:
-        W = np.ones(X.size)
-    W_sum = W.sum()
-    x_mean = np.sum(W * X) / W_sum
-    y_mean = np.sum(W * Y) / W_sum
-    x_var = np.sum(W * (X - x_mean) ** 2)
-    xy_cov = np.sum(W * (X - x_mean) * (Y - y_mean))
-    best_slope = xy_cov / x_var
-    best_intercept = y_mean - best_slope * x_mean
-    # errors in best_slope and best_intercept
-    estimate = best_intercept + best_slope * X
-    s2 = sum(estimate - Y) ** 2 / (Y.size - 2)
-    s2_intercept = s2 * (1.0 / X.size + x_mean**2 / ((X.size - 1) * x_var))
-    s2_slope = s2 * (1.0 / ((X.size - 1) * x_var))
-    return best_slope, best_intercept, np.sqrt(s2_slope)
-
-
-def linear_spline(b1, log_tau_c, log_tau):
-    """Linear spline model of occupation probability.
-
-    """
-    spline1 = log_tau <= log_tau_c
-    spline2 = ~spline1
-    log_x = np.zeros(len(log_tau), dtype=np.float32)
-    log_x[spline1] = b1 * (log_tau[spline1] - log_tau_c)
-    return log_x
+    return
 
 
 def fit_occupation_probability(
@@ -1045,161 +805,75 @@ def fit_occupation_probability(
     return fractal_output
 
 
-def sliding_window_analysis(
-    eq_timings,
-    start_date,
-    end_date,
-    freq,
-    n_min=100,
-    min_duration=7,
-    tau_min=5.0,
-    mode="datetime",
-    plot_above=1.0,
-    model="linear_spline",
-    return_rms=False,
-    verbose=1,
-):
-    """Apply the fractal analysis in a causal sliding window.
+# ===============================================================
+#               UTILITY FUNCTIONS
+# ===============================================================
+def linear_spline(b1, log_tau_c, log_tau):
+    """Linear spline model of occupation probability.
 
+    """
+    spline1 = log_tau <= log_tau_c
+    spline2 = ~spline1
+    log_x = np.zeros(len(log_tau), dtype=np.float32)
+    log_x[spline1] = b1 * (log_tau[spline1] - log_tau_c)
+    return log_x
+
+
+def linear_regression(x, y):
+    """
+    cf. https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.linregress.html
+
+    Returns
+    -------
+    a: slope
+    b: intercept
+    r_val: correlation coefficient, usually
+           people use the coefficient of determination
+           R**2 = r_val**2 to measure the quality of
+           the fit
+    p_val: two-sided p-value for a hypothesis test whose null
+           hypothesis is that the slope is zero
+    std_err: standard error of the estimated slope
+    """
+    from scipy.stats import linregress
+
+    a, b, r_val, p_val, std_err = linregress(x, y)
+    return a, b, r_val, p_val, std_err
+
+
+def weighted_linear_regression(X, Y, W=None):
+    """
     Parameters
-    ------------
-    eq_timings: (n_times,) numpy.ndarray
-        Earthquake timings, in seconds.
-    start_date: string or datetime
-        Start of the date range.
-    end_date: string or datetime
-        End of the date range.
-    freq: string or float
-        If `mode='datetime'`: String specifying the time step and time
-        unit of the step. For example, '2.0S' or '1D'.
-        If `mode='seconds'`: Float specifying the time step in seconds.
-    n_min: scalar int
-        Minimum number of events to include in a sliding window. If
-        this number is not reached, the window is lenghtened on the
-        left (in the past).
-    min_duration: scalar float or int
-        Minimum duration, in days, of the sliding window. The window
-        might be longer if `n_min` is not satisfied.
-    tau_min: scalar float, default to 5
-        Smallest bin size, in seconds.
-    mode: string, default to 'datetime'
-        Either 'datetime' or 'seconds'.
-        If `mode='datetime'`, `start_date` and `end_date` are given as
-        strings or datetimes, and `freq` is a string.
-        If `mode='seconds'`, `start_date`, `end_date`, and `freq` are
-        in seconds.
-    plot_above: scalar float, default to 1.
-        Plot the graph of occupied fraction vs time bin size if the
-        fractal dimension is above `plot_above`.
-    return_rms: boolean, default to False
-        If True, return the rms of the fit of each window.
-    verbose: scalar int, default to 1
-        If 1, print warning messages. If 0, does not print anything.
+    -----------
+    X: (n,) numpy array or list
+    Y: (n,) numpy array or list
+    W: default to None, (n,) numpy array or list
 
     Returns
     --------
-    fractal_dim: (n_times,) numpy.ndarray
-        Fractal dimension measured at each time step.
-    time: (n_times,) numpy.ndarray
-        Timestamps, in seconds, at which `fractal_dim` is given.
+    best_slope: scalar float,
+        Best slope from the least square formula
+    best_intercept: scalar float,
+        Best intercept from the least square formula
+    std_err: scalar float,
+        Error on the slope
     """
-    if isinstance(eq_timings, list):
-        eq_timings = np.asarray(eq_timings)
-    if mode == "datetime":
-        if type(freq) != str:
-            raise ("`freq` should be given as a string when `mode` is datetime")
-        time = timestamp_range(start_date, end_date, freq)
-        dt_sec = pd.Timedelta(min_duration, unit="day").total_seconds()
-    elif mode == "seconds":
-        if type(freq) != float:
-            raise ("`freq` should be given as a float when `mode` is seconds")
-        time = np.arange(start_date, end_date, freq)
-        dt_sec = min_duration
-    else:
-        raise ("`mode` should be either datetime or seconds!")
-    time.sort()
-    fractal_dim = np.zeros(len(time), dtype=np.float32)
-    fractal_dim_err = np.zeros(len(time), dtype=np.float32)
-    log_tau_c = np.zeros(len(time), dtype=np.float32)
-    if return_rms:
-        rms = np.zeros(len(time), dtype=np.float32)
-    for i in range(len(time)):
-        t_end = time[i]
-        t_start = time[i] - dt_sec
-        if t_start < time[0]:
-            print(f"0, Skip {i}")
-            continue
-        indexes = np.where((eq_timings >= t_start) & (eq_timings < t_end))[0]
-        if len(indexes) == 0:
-            print(f"1, Skip {i}")
-            continue
-        elif (len(indexes) < n_min) & (indexes[-1] < n_min):
-            # cannot meet the minimum number of events
-            # do not compute this fractal dimension
-            print(f"2, Skip {i}")
-            continue
-        elif (len(indexes) < n_min) & (indexes[-1] >= n_min):
-            t_start = eq_timings[indexes[-1] - n_min]
-        eq_timings_win = eq_timings[(eq_timings >= t_start) & (eq_timings < t_end)]
-        window_dur = t_end - t_start
-        _, _, fractal_output = fractal_analysis(
-            eq_timings_win,
-            tau_min=tau_min,
-            window_duration=window_dur,
-            plot_above=plot_above,
-            model=model,
-            verbose=verbose,
-        )
-        fractal_dim[i] = fractal_output["fractal_dim"]
-        fractal_dim_err[i] = fractal_output["fractal_dim_err"]
-        if "log_tau_c" in fractal_output:
-            log_tau_c[i] = fractal_output["log_tau_c"]
-        if return_rms:
-            rms[i] = fractal_output["rms"]
-    if mode == "datetime":
-        # return time as a list of datatimes
-        time = pd.date_range(start=start_date, end=end_date, freq=freq).values.astype(
-            "datetime64[ms]"
-        )
-        time.sort()
-    if model == "linear_spline" or model == "inverse_function":
-        output = (
-            fractal_dim,
-            fractal_dim_err,
-            log_tau_c,
-        )
-    else:
-        output = (
-            fractal_dim,
-            fractal_dim_err,
-        )
-    if return_rms:
-        output = output + (rms,)
-    return output + (time,)
-
-
-def timestamp_range(start_date, end_date, freq):
-    """A date range returned as timestamps (seconds).
-
-    Parameters
-    -----------
-    start_date: string or datetime
-        Start of the date range.
-    end_date: string or datetime
-        End of the date range.
-    freq: string
-        String specifying the time step and time unit of the step. For
-        example, '2.0S' or '1D'.
-
-    Returns
-    ---------
-    date_range: (n_times,) float numpy.ndarray
-        Array with regularly spaced timestamps.
-    """
-    date_range = pd.date_range(start=start_date, end=end_date, freq=freq)
-    timestamps = [time.timestamp() for time in date_range]
-    return np.float64(timestamps)
-
+    X = np.asarray(X)
+    if W is None:
+        W = np.ones(X.size)
+    W_sum = W.sum()
+    x_mean = np.sum(W * X) / W_sum
+    y_mean = np.sum(W * Y) / W_sum
+    x_var = np.sum(W * (X - x_mean) ** 2)
+    xy_cov = np.sum(W * (X - x_mean) * (Y - y_mean))
+    best_slope = xy_cov / x_var
+    best_intercept = y_mean - best_slope * x_mean
+    # errors in best_slope and best_intercept
+    estimate = best_intercept + best_slope * X
+    s2 = sum(estimate - Y) ** 2 / (Y.size - 2)
+    s2_intercept = s2 * (1.0 / X.size + x_mean**2 / ((X.size - 1) * x_var))
+    s2_slope = s2 * (1.0 / ((X.size - 1) * x_var))
+    return best_slope, best_intercept, np.sqrt(s2_slope)
 
 def kullback_leibler_divergence(ref_density_function, test_density_function):
     """
@@ -1396,25 +1070,13 @@ def occupation_probability_constrained_fractal_model(
     interval size is given by:
 
     p(tau) = (1 + (tau_c / tau)^(n * alpha))^(-1 / alpha)  if log = False
-    p(tau) = -1 / alpha * log10(1 + (tau_c / tau)^(n * alpha)) if log = True
+    log p(tau) = -1 / alpha * log10(1 + (tau_c / tau)^(n * alpha)) if log = True
     """
     tau_c = theoretical_tau_c(n, normalized_tau_min)
     if log:
         return -1.0 / alpha * np.log10(1. + (tau_c / tau)**(n * alpha))
     else:
         return np.power(1. / (1. + (tau_c / tau)**(n * alpha)), 1. / alpha)
-
-
-def inverse_function_log(tau, alpha, tau_c, gamma):
-    return (-1.0 / gamma) * np.log10(1 + (tau_c / tau) ** (alpha * gamma))
-
-
-def _fractal_dimension(gamma):
-    return 0.2 * (gamma - 1.0) ** 2
-    # return 1. - gamma**gamma * (gamma + 1.)
-    # if np.abs(gamma - 1.) < 0.01:
-    #    return 0.
-    # return gamma**2 / (1. - gamma)
 
 
 def theoretical_C(gamma, beta):
@@ -1639,3 +1301,152 @@ def occupation_Poissonian_uncertainty(
                     )
         uncertainty[i] *= binom(n_bins, n_bins - num_occupied_bins)
     return possible_fractions, uncertainty
+
+
+# ===============================================================
+#               TIME DEPENDENT ANALYSIS
+# ===============================================================
+
+def running_occupation_analysis(
+    eq_timings,
+    start_date,
+    end_date,
+    freq,
+    min_num_events=100,
+    min_duration=7,
+    mode="datetime",
+    verbose=1,
+    **occupation_analysis_kwargs,
+):
+    """Apply the fractal analysis in a causal sliding window.
+
+    Parameters
+    ------------
+    eq_timings : numpy.ndarray
+        Earthquake timings, in seconds.
+    start_date : string or datetime
+        Start of the date range.
+    end_date : string or datetime
+        End of the date range.
+    freq : string or float
+        - If `mode='datetime'`: String specifying the time step and time
+          unit of the step. For example, '2.0S' or '1D'.
+        - If `mode='seconds'`: Float specifying the time step in seconds.
+    n_min: scalar int
+        Minimum number of events to include in a sliding window. If
+        this number is not reached, the window is lenghtened on the
+        left (in the past).
+    min_duration: scalar float or int
+        Minimum duration, in days, of the sliding window. The window
+        might be longer if `n_min` is not satisfied.
+    mode: string, default to 'datetime'
+        Either 'datetime' or 'seconds'.
+        If `mode='datetime'`, `start_date` and `end_date` are given as
+        strings or datetimes, and `freq` is a string.
+        If `mode='seconds'`, `start_date`, `end_date`, and `freq` are
+        in seconds.
+    verbose: scalar int, default to 1
+        If 1, print warning messages. If 0, does not print anything.
+
+    Returns
+    --------
+    fractal_dim: (n_times,) numpy.ndarray
+        Fractal dimension measured at each time step.
+    time: (n_times,) numpy.ndarray
+        Timestamps, in seconds, at which `fractal_dim` is given.
+    """
+    if isinstance(eq_timings, list):
+        eq_timings = np.asarray(eq_timings)
+    assert mode in ["datetime", "seconds"], print("`mode` should be either datetime or seconds!")
+    if mode == "datetime":
+        if type(freq) != str:
+            raise ("`freq` should be given as a string when `mode` is datetime")
+        time = timestamp_range(start_date, end_date, freq)
+        dt_sec = pd.Timedelta(min_duration, unit="day").total_seconds()
+    elif mode == "seconds":
+        if type(freq) != float:
+            raise ("`freq` should be given as a float when `mode` is seconds")
+        time = np.arange(start_date, end_date, freq)
+        dt_sec = min_duration
+    #time.sort()
+    fractal_dim = np.zeros(len(time), dtype=np.float32)
+    fractal_dim_err = np.zeros(len(time), dtype=np.float32)
+    log_tau_c = np.zeros(len(time), dtype=np.float32)
+    if return_rms:
+        rms = np.zeros(len(time), dtype=np.float32)
+    for i in range(len(time)):
+        t_end = time[i]
+        t_start = time[i] - dt_sec
+        if t_start < time[0]:
+            print(f"0, Skip {i}")
+            continue
+        indexes = np.where((eq_timings >= t_start) & (eq_timings < t_end))[0]
+        if len(indexes) == 0:
+            print(f"1, Skip {i}")
+            continue
+        elif (len(indexes) < n_min) & (indexes[-1] < n_min):
+            # cannot meet the minimum number of events
+            # do not compute this fractal dimension
+            print(f"2, Skip {i}")
+            continue
+        elif (len(indexes) < n_min) & (indexes[-1] >= n_min):
+            t_start = eq_timings[indexes[-1] - n_min]
+        eq_timings_win = eq_timings[(eq_timings >= t_start) & (eq_timings < t_end)]
+        window_dur = t_end - t_start
+        _, _, fractal_output = fractal_analysis(
+            eq_timings_win,
+            tau_min=tau_min,
+            window_duration=window_dur,
+            plot_above=plot_above,
+            model=model,
+            verbose=verbose,
+        )
+        fractal_dim[i] = fractal_output["fractal_dim"]
+        fractal_dim_err[i] = fractal_output["fractal_dim_err"]
+        if "log_tau_c" in fractal_output:
+            log_tau_c[i] = fractal_output["log_tau_c"]
+        if return_rms:
+            rms[i] = fractal_output["rms"]
+    if mode == "datetime":
+        # return time as a list of datatimes
+        time = pd.date_range(start=start_date, end=end_date, freq=freq).values.astype(
+            "datetime64[ms]"
+        )
+        time.sort()
+    if model == "linear_spline" or model == "inverse_function":
+        output = (
+            fractal_dim,
+            fractal_dim_err,
+            log_tau_c,
+        )
+    else:
+        output = (
+            fractal_dim,
+            fractal_dim_err,
+        )
+    if return_rms:
+        output = output + (rms,)
+    return output + (time,)
+
+def timestamp_range(start_date, end_date, freq):
+    """A date range returned as timestamps (seconds).
+
+    Parameters
+    -----------
+    start_date: string or datetime
+        Start of the date range.
+    end_date: string or datetime
+        End of the date range.
+    freq: string
+        String specifying the time step and time unit of the step. For
+        example, '2.0S' or '1D'.
+
+    Returns
+    ---------
+    date_range: (n_times,) float numpy.ndarray
+        Array with regularly spaced timestamps.
+    """
+    date_range = pd.date_range(start=start_date, end=end_date, freq=freq)
+    timestamps = [time.timestamp() for time in date_range]
+    return np.float64(timestamps)
+
