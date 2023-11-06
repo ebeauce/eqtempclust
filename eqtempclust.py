@@ -58,7 +58,7 @@ def compute_occupation_probability(
     shortest_resolved_interevent_time=5.0,
     num_resamplings=10,
     interval_uncertainty_pct=5.0,
-    mini_batch=1000000
+    mini_batch=1000000,
 ):
     """Compute the occupation probability
 
@@ -135,7 +135,7 @@ def compute_occupation_probability(
     average_waiting_time = 1.0 / average_rate
     # print(f"Average waiting time is: {average_waiting_time:.2f}")
     shortest_interval_size = normalized_tau_min * average_waiting_time
-    #print(f"Shortest time interval is {shortest_interval_size:.2f}sec")
+    # print(f"Shortest time interval is {shortest_interval_size:.2f}sec")
     if shortest_interval_size < shortest_resolved_interevent_time:
         suggested_increase = shortest_resolved_interevent_time / shortest_interval_size
         print(
@@ -155,11 +155,12 @@ def compute_occupation_probability(
         normalized_time_range, normalized_tau_min, normalized_tau_max, base_log=base_log
     )
     # -------------------------------
-    rescaled_eq_timings = (
-            (normalized_eq_timings - min_normalized_eq_timing)
-            /
-            (max_normalized_eq_timing - min_normalized_eq_timing)
-            )
+    rescaled_eq_timings = (normalized_eq_timings - min_normalized_eq_timing) / (
+        max_normalized_eq_timing - min_normalized_eq_timing
+    )
+    # force the last earthquake to be part of the last bin rather than
+    # being exactly at time=1
+    rescaled_eq_timings[-1] -= normalized_tau_min / 10.0
     # -------------------------------
 
     Phi = np.zeros(len(normalized_tau), dtype=np.float32)
@@ -170,12 +171,12 @@ def compute_occupation_probability(
     # print(f"Average normalized waiting time is: {np.mean(wt):.2f}")
     rng = np.random.default_rng()
     for i in range(len(normalized_tau)):
-        #print(f"{i}: {nbins[i]} bins")
-        #n_tau, _ = np.histogram(
+        # print(f"{i}: {nbins[i]} bins")
+        # n_tau, _ = np.histogram(
         #    normalized_eq_timings,
         #    bins=nbins[i],
         #    range=(min_normalized_eq_timing, max_normalized_eq_timing),
-        #)
+        # )
         n_tau = np.bincount(np.int64(rescaled_eq_timings * nbins[i]))
         if n_tau.max() == 1:
             # we reached the bin size when there is at most one
@@ -185,28 +186,24 @@ def compute_occupation_probability(
             valid[i] = False
         occupied_bins = n_tau != 0
         del n_tau
-        #print(f"Bin count done. ({occupied_bins.dtype})")
+        # print(f"Bin count done. ({occupied_bins.dtype})")
         num_bins = len(occupied_bins)
         Phi[i] = np.sum(occupied_bins) / np.float64(nbins[i])
         Phi_rsmpl = np.zeros(num_resamplings, dtype=np.float32)
-        #resampled_occupied_bins = np.zeros(nbins[i], dtype=bool)
+        # resampled_occupied_bins = np.zeros(nbins[i], dtype=bool)
         for j in range(num_resamplings):
-            summed_occupied = 0.
+            summed_occupied = 0.0
             num_mini_batches = num_bins // mini_batch
             remain = num_bins % mini_batch
             for k in range(num_mini_batches):
                 summed_occupied += np.sum(
-                        rng.choice(
-                            occupied_bins, size=mini_batch, replace=True
-                            )
-                        )
+                    rng.choice(occupied_bins, size=mini_batch, replace=True)
+                )
             summed_occupied += np.sum(
-                    rng.choice(
-                        occupied_bins, size=remain, replace=True
-                        )
-                    )
+                rng.choice(occupied_bins, size=remain, replace=True)
+            )
             Phi_rsmpl[j] = summed_occupied / float(num_bins)
-            #Phi_rsmpl[j] = np.sum(
+            # Phi_rsmpl[j] = np.sum(
             #        np.random.choice(occupied_bins, size=num_bins, replace=True)
             #        ) / float(num_bins)
         Phi_lower[i] = np.percentile(Phi_rsmpl, interval_uncertainty_pct / 2.0)
@@ -294,7 +291,7 @@ def occupation_analysis(
     plot_above=1.0,
     interval_uncertainty_pct=5.0,
     num_resamplings=10,
-    #leaveout_pct=5.0,
+    # leaveout_pct=5.0,
     **kwargs,
 ):
     """Compute the fractal dimension.
@@ -448,7 +445,7 @@ def occupation_analysis(
                     # window_duration=window_duration,
                     shortest_resolved_interevent_time=shortest_resolved_interevent_time,
                     num_resamplings=num_resamplings,
-                    #leaveout_pct=leaveout_pct,
+                    # leaveout_pct=leaveout_pct,
                     interval_uncertainty_pct=interval_uncertainty_pct,
                 )
                 mw_Phi.append(mw_Phi_i)
@@ -668,7 +665,14 @@ def lacunarity(eq_timings, bin_size, starttime=None, endtime=None):
 
 
 def fit_occupation_probability(
-    Phi, tau, tau_min, tau_max=None, model="fractal", loss="l2_log", average_rate=None, **kwargs
+    Phi,
+    tau,
+    tau_min,
+    tau_max=None,
+    model="fractal",
+    loss="l2_log",
+    average_rate=None,
+    **kwargs,
 ):
     """
     Fit the occupation probability Phi(tau) in the log-log space.
@@ -730,13 +734,13 @@ def fit_occupation_probability(
     occupation_parameters = {}
 
     param_bounds = {
-            "n_min": 0.,
-            "n_max": 1.0,
-            "alpha_min": 0.25,
-            "alpha_max": 5.00,
-            "gamma_min": 0.,
-            "gamma_max": 1.,
-            }
+        "n_min": 0.0,
+        "n_max": 1.0,
+        "alpha_min": 0.25,
+        "alpha_max": 10.00,
+        "gamma_min": 0.0,
+        "gamma_max": 1.0,
+    }
 
     if model == "linear_spline":
         log_tau_range = log_tau.max() - np.log10(tau_min).min()
@@ -788,18 +792,20 @@ def fit_occupation_probability(
                 occupation_probability_unconstrained_fractal_model, log=False
             )
             loss = lambda params: scipy.stats.entropy(
-                    Phi[selection],
-                    qk=fractal_occupation(tau[selection], *params),
-                    )
+                Phi[selection],
+                qk=fractal_occupation(tau[selection], *params),
+            )
             bounds = [
-                    (param_bounds["n_min"], param_bounds["n_max"]),
-                    (min(tau), max(tau)),
-                    (param_bounds["alpha_min"], param_bounds["alpha_max"])
-                    ]
+                (param_bounds["n_min"], param_bounds["n_max"]),
+                (min(tau), max(tau)),
+                (param_bounds["alpha_min"], param_bounds["alpha_max"]),
+            ]
             # call minimize
             results = scipy.optimize.minimize(
-                    loss, p0, bounds=bounds,
-                    )
+                loss,
+                p0,
+                bounds=bounds,
+            )
             popt = results.x
             perr = np.sqrt(np.diag(results.hess_inv.todense()) * results.fun)
             print(results.status)
@@ -809,15 +815,15 @@ def fit_occupation_probability(
                 occupation_probability_unconstrained_fractal_model, log=True
             )
             bounds = (
-                    (param_bounds["n_min"], min(tau), param_bounds["alpha_min"]),
-                    (param_bounds["n_max"], max(tau), param_bounds["alpha_max"])
-                    )
+                (param_bounds["n_min"], min(tau), param_bounds["alpha_min"]),
+                (param_bounds["n_max"], max(tau), param_bounds["alpha_max"]),
+            )
             # call curve_fit
             popt, pcov = curve_fit(
                 fractal_occupation_log,
                 tau[selection],
                 log_Phi[selection],
-                #Phi[selection],
+                # Phi[selection],
                 p0=p0,
                 bounds=bounds,
                 **kwargs,
@@ -840,17 +846,16 @@ def fit_occupation_probability(
         #        )
 
         squared_res = np.sqrt(
-                np.mean(
-                    log_Phi[selection]
-                    -
-                    occupation_probability_unconstrained_fractal_model(
-                        tau[selection], *popt, log=True
-                        )
-                    )
+            np.mean(
+                log_Phi[selection]
+                - occupation_probability_unconstrained_fractal_model(
+                    tau[selection], *popt, log=True
                 )
+            )
+        )
         rms = np.sqrt(squared_res)
         var0 = np.var(log_Phi[selection])
-        var_reduction = 1. - squared_res / var0
+        var_reduction = 1.0 - squared_res / var0
 
         occupation_parameters["n"] = popt[0]
         occupation_parameters["n_err"] = perr[0]
@@ -903,14 +908,12 @@ def fit_occupation_probability(
                 occupation_probability_gamma_model, lamb=average_rate, log=False
             )
             loss = lambda params: scipy.stats.entropy(
-                    Phi[selection],
-                    qk=gamma_occupation(tau[selection], params[0]),
-                    )
+                Phi[selection],
+                qk=gamma_occupation(tau[selection], params[0]),
+            )
             # call minimize
             bounds = [(param_bounds["gamma_min"], param_bounds["gamma_max"])]
-            results = scipy.optimize.minimize(
-                    loss, p0, bounds=bounds
-                    )
+            results = scipy.optimize.minimize(loss, p0, bounds=bounds)
             popt = results.x
             perr = np.sqrt(np.diag(results.hess_inv.todense()) * results.fun)
         else:
@@ -919,16 +922,11 @@ def fit_occupation_probability(
             return
 
         squared_res = np.sqrt(
-                np.mean(
-                    log_Phi[selection]
-                    -
-                    gamma_occupation_log(tau[selection], *popt)
-                    )
-                )
+            np.mean(log_Phi[selection] - gamma_occupation_log(tau[selection], *popt))
+        )
         rms = np.sqrt(squared_res)
         var0 = np.var(log_Phi[selection])
-        var_reduction = 1. - squared_res / var0
-
+        var_reduction = 1.0 - squared_res / var0
 
         # for i, attr in enumerate(["gamma", "beta"]):
         for i, attr in enumerate(["gamma"]):
@@ -1024,8 +1022,9 @@ def kullback_leibler_divergence(ref_density_function, test_density_function):
     return unnormalized_kl_div / norm
 
 
-def gamma_waiting_times(waiting_time, gamma, beta=None, normalized=True,
-        log=False, C="theoretical"):
+def gamma_waiting_times(
+    waiting_time, gamma, beta=None, normalized=True, log=False, C="theoretical"
+):
     """
     Returns the value of the gamma distribution function at a given point.
 
@@ -1066,6 +1065,11 @@ def gamma_waiting_times(waiting_time, gamma, beta=None, normalized=True,
         C = theoretical_C(gamma, beta)
     elif C == "truncated":
         C = truncated_C(gamma, beta, waiting_time.min(), waiting_time.max())
+    # print(f"C is {C:.2f}")
+    # print(gamma - 1.0)
+    # print(np.exp(-waiting_time / beta))
+    # print(waiting_time ** (gamma - 1.0))
+    # print("out", C * waiting_time ** (gamma - 1.0) * np.exp(-waiting_time / beta))
     if log:
         return np.log10(
             C * waiting_time ** (gamma - 1.0) * np.exp(-waiting_time / beta)
@@ -1130,7 +1134,7 @@ def _dlogPhi_dlogtau(tau, gamma):
     return loglog_slope
 
 
-def fractal_waiting_times(w, n, tau_c, alpha):
+def fractal_waiting_times(w, n, tau_c, alpha, log=False):
     """ """
     omega = (tau_c / w) ** (n * alpha)
     pdf = (
@@ -1139,7 +1143,10 @@ def fractal_waiting_times(w, n, tau_c, alpha):
         * (1.0 / (1.0 + omega) ** (1.0 / alpha + 2.0))
         * (1.0 + n * alpha + (1.0 - n) * omega)
     )
-    return pdf
+    if log:
+        return np.log10(pdf)
+    else:
+        return pdf
 
 
 def occupation_probability_unconstrained_fractal_model(tau, n, tau_c, alpha, log=False):
@@ -1325,6 +1332,7 @@ def fit_interevent_pdf(
     model="powerlaw",
     loss="l2_log",
     fix_beta=True,
+    min_pdf=1.0e-6,
     **kwargs,
 ):
     """
@@ -1347,6 +1355,22 @@ def fit_interevent_pdf(
         If None, uses the whole range given by `ie_times`.
     model : string, optional
         Can either be 'powerlaw' or 'gamma'.
+    loss : string, optional
+        Either of 'l2_log' or 'relative_entropy'.
+        - 'l2_log' (default): Minimize the l2 norm of the difference
+                              of the log(pdf).
+        - 'relative_entropy': Minimize the relative entropy as
+                              given by `scipy.stats.entropy`.
+    fix_beta : boolean, optional
+        Relevant only if model='gamma'. If True, the beta parameter
+        is fixed such that beta = 1/gamma. Note that if the waiting
+        times are normalized such that their mean is 1, then beta
+        *should* be fixed to 1/gamma in order to satisfy the definition
+        of a pdf. Default is True.
+    min_pdf : float, optional
+        Only pdf values above this threshold are considered when fitting.
+        This is to avoid numerical issues related to log values of very
+        small numbers.
 
     Returns
     -------
@@ -1374,67 +1398,69 @@ def fit_interevent_pdf(
     >>> slope, intercept, err = fit_interevent_pdf(ie_bins, ie_pdf)
     """
     model = model.lower()
-    assert model in ["powerlaw", "gamma", "fractal"], \
-            "model should be 'powerlaw', 'gamma', or 'fractal'"
+    assert model in [
+        "powerlaw",
+        "gamma",
+        "fractal",
+    ], "model should be 'powerlaw', 'gamma', or 'fractal'"
 
     param_bounds = {
-            "n_min": 0.,
-            "n_max": 1.0,
-            "alpha_min": 0.25,
-            "alpha_max": 5.00,
-            "gamma_min": 0.,
-            "gamma_max": 1.,
-            "beta_min": 0.,
-            "beta_max": np.inf,
-            }
+        "n_min": 0.0,
+        "n_max": 1.0,
+        "alpha_min": 0.25,
+        "alpha_max": 5.00,
+        "gamma_min": 0.0,
+        "gamma_max": 1.0,
+        "beta_min": 0.0,
+        "beta_max": np.inf,
+    }
 
+    if loss == "l2_log":
+        model_kwargs = {"log": True}
+    elif loss == "relative_entropy":
+        model_kwargs = {"log": False}
     if model == "powerlaw":
         from scipy.stats import linregress
 
         normalized_ie_times = ie_times / ie_times.mean()
-        valid = (pdf != 0.0) & (normalized_ie_times < tau_max_fit)  # for empty bins
+        valid = (pdf > min_pdf) & (normalized_ie_times < tau_max_fit)  # for empty bins
         slope, intercept, _, _, err = linregress(
             np.log10(ie_times[valid]), np.log10(pdf[valid])
         )
         return slope, intercept, err
     elif model == "gamma":
-        valid = pdf != 0.0
-        model_kwargs = {
-                "normalized": normalized_waiting_times,
-                "log": True,
-                "C": "truncated"
-                }
+        valid = pdf > min_pdf
+        model_kwargs["normalized"] = normalized_waiting_times
+        model_kwargs["C"] = "truncated"
         gamma0 = 0.67
         if fix_beta:
             # this is the only correct solution so that
             # the gamma function satisfies the pdf constraints
             p0 = [gamma0]
-            model = lambda w, gamma: gamma_waiting_times(
-                    w, gamma, **model_kwargs
-                    )
+            model = lambda w, gamma: gamma_waiting_times(w, gamma, **model_kwargs)
             if loss == "l2_log":
                 bounds = ((param_bounds["gamma_min"]), (param_bounds["gamma_max"]))
             elif loss == "relative_entropy":
                 bounds = [
-                        (param_bounds["gamma_min"], param_bounds["gamma_max"]),
-                        ]
+                    (param_bounds["gamma_min"], param_bounds["gamma_max"]),
+                ]
         else:
-            p0 = [gamma0, 1./gamma0]
+            p0 = [gamma0, 1.0 / gamma0]
             model = lambda w, gamma, beta: gamma_waiting_times(
-                    w, gamma, beta=beta, **model_kwargs
-                    )
+                w, gamma, beta=beta, **model_kwargs
+            )
             if loss == "l2_log":
                 bounds = (
-                        (param_bounds["gamma_min"], param_bounds["beta_min"]),
-                        (param_bounds["gamma_max"], param_bounds["beta_max"])
-                        )
+                    (param_bounds["gamma_min"], param_bounds["beta_min"]),
+                    (param_bounds["gamma_max"], param_bounds["beta_max"]),
+                )
             elif loss == "relative_entropy":
                 bounds = [
-                        (param_bounds["gamma_min"], param_bounds["gamma_max"]),
-                        (param_bounds["beta_min"], param_bounds["beta_max"])
-                        ]
+                    (param_bounds["gamma_min"], param_bounds["gamma_max"]),
+                    (param_bounds["beta_min"], param_bounds["beta_max"]),
+                ]
     elif model == "fractal":
-        valid = pdf != 0.0
+        valid = pdf > min_pdf
         # first guess parameters
         D_random = 0.1
         tau_c_max = theoretical_tau_c(1.0 - D_random, ie_times.min())
@@ -1442,21 +1468,29 @@ def fit_interevent_pdf(
         # model with data-dependent theta_min
         p0 = [1.0 - D_random, tau_c_max, sharpness]
         # bounds (bounds_min, bounds_max)
-        #bounds = ((0.0, min(ie_times[valid]), 0.25), (1.0, max(ie_times[valid]), 4.0))
-        model = lambda w, n, tau_c, alpha: np.log10(
-                fractal_waiting_times(w, n, tau_c, alpha)
-                )
+        # bounds = ((0.0, min(ie_times[valid]), 0.25), (1.0, max(ie_times[valid]), 4.0))
+        model = lambda w, n, tau_c, alpha: fractal_waiting_times(
+            w, n, tau_c, alpha, **model_kwargs
+        )
         if loss == "l2_log":
             bounds = (
-                    (param_bounds["n_min"], min(ie_times[valid]), param_bounds["alpha_min"]),
-                    (param_bounds["n_max"], max(ie_times[valid]), param_bounds["alpha_max"])
-                    )
+                (
+                    param_bounds["n_min"],
+                    min(ie_times[valid]),
+                    param_bounds["alpha_min"],
+                ),
+                (
+                    param_bounds["n_max"],
+                    max(ie_times[valid]),
+                    param_bounds["alpha_max"],
+                ),
+            )
         elif loss == "relative_entropy":
             bounds = [
-                    (param_bounds["n_min"], param_bounds["n_max"]),
-                    (min(ie_times[valid]), max(ie_times[valid])),
-                    (param_bounds["alpha_min"], param_bounds["alpha_max"])
-                    ]
+                (param_bounds["n_min"], param_bounds["n_max"]),
+                (min(ie_times[valid]), max(ie_times[valid])),
+                (param_bounds["alpha_min"], param_bounds["alpha_max"]),
+            ]
     if loss == "l2_log":
         popt, pcov = curve_fit(
             model,
@@ -1469,13 +1503,15 @@ def fit_interevent_pdf(
         std_err = np.sqrt(np.diag(pcov))
     elif loss == "relative_entropy":
         loss = lambda params: scipy.stats.entropy(
-                np.log10(pdf[valid]),
-                qk=model(ie_times[valid], *params),
-                )
+            pdf[valid],
+            qk=model(ie_times[valid], *params),
+        )
         # call minimize
         results = scipy.optimize.minimize(
-                loss, p0, bounds=bounds,
-                )
+            loss,
+            p0,
+            bounds=bounds,
+        )
         popt = results.x
         std_err = np.sqrt(np.diag(results.hess_inv.todense()) * results.fun)
     return *popt, *std_err
@@ -1657,7 +1693,276 @@ def timestamp_range(start_date, end_date, freq):
     timestamps = [time.timestamp() for time in date_range]
     return np.float64(timestamps)
 
+
 def aic_(x, model, num_params):
-    """Akaike Information Criterion.
+    """Akaike Information Criterion."""
+    return -2.0 * np.log(model(x)) + 2.0 * num_params
+
+
+# ------------------------------------------------------------
+#               wrapper for whoel workflow
+# ------------------------------------------------------------
+
+
+def run_occupation_analysis1(
+    timings,
+    normalized_tau_min,
+    normalized_tau_max,
+    min_num_events=5,
+    nbins_wt=20,
+    shortest_resolved_time=5.0,
+    fix_beta=True,
+    loss_pdf="relative_entropy",
+    loss_phi="l2_log",
+    base_log=2.0,
+    num_resamplings=50,
+):
     """
-    return -2. * np.log(model(x)) + 2. * num_params
+    Perform occupation analysis on event timings and inter-event times.
+
+    Parameters:
+    -----------
+    timings : numpy.ndarray
+        Array of event timings.
+    normalized_tau_min : float
+        Minimum normalized time bin size and inter-event time.
+    normalized_tau_max : float
+        Maximum normalized time bin size and inter-event time.
+    min_num_events : int, optional
+        Minimum number of events for analysis (default is 5).
+    nbins_wt : int, optional
+        Number of bins for the inter-event time PDF (default is 20).
+    shortest_resolved_time : float, optional
+        Minimum resolved inter-event time (default is 5.0).
+    fix_beta : bool, optional
+        Whether to fix the beta parameter in the gamma model (default is True).
+    loss_pdf : str, optional
+        Loss function for inter-event time PDF fitting (default is "relative_entropy").
+    loss_phi : str, optional
+        Loss function for occupation probability fractal model fitting (default is "l2_log").
+    base_log : float, optional
+        Base for logarithm used in bin log spacing (default is 2.0).
+    num_resamplings : int, optional
+        Number of resampling iterations (default is 50).
+
+    Returns:
+    --------
+    dict
+        A dictionary containing the results of the occupation analysis, including
+        occupation probability, inter-event time PDF, gamma model parameters, and
+        fractal model parameters.
+
+    Notes:
+    ------
+    This function computes occupation probability, inter-event time PDF, fits a gamma model
+    to the PDF, and fits a fractal model to occupation probability. It returns the results
+    as a dictionary.
+    """
+    output = {}
+    # compute occupation probability
+    Phi, Phi_lower, Phi_upper, tau = compute_occupation_probability(
+        timings,
+        normalized_tau_min=normalized_tau_min,
+        normalized_tau_max=normalized_tau_max,
+        base_log=base_log,
+        min_num_events=min_num_events,
+        shortest_resolved_interevent_time=shortest_resolved_time,
+        num_resamplings=num_resamplings,
+    )
+    output["Phi"] = Phi
+    output["Phi_lower"] = Phi_lower
+    output["Phi_upper"] = Phi_upper
+    output["tau"] = tau
+    # compute inter-event time pdf
+    waiting_times = timings[1:] - timings[:-1]
+    wt_bins = np.logspace(np.log10(tau.min()), np.log10(tau.max()), nbins_wt)
+    wt_pdf, wt_bins = interevent_pdf(
+        waiting_times / waiting_times.mean(), return_midbins=True, bins=wt_bins
+    )
+    output["wt_pdf"] = wt_pdf
+    output["wt_bins"] = wt_bins
+    output["wt_mean"] = waiting_times.mean()
+
+    # fit gamma model to inter-event time pdf
+    if fix_beta:
+        output["gamma"], output["gamma_err"] = fit_interevent_pdf(
+            wt_bins,
+            wt_pdf,
+            tau_max_fit=normalized_tau_max,
+            tau_min_fit=normalized_tau_min,
+            normalized_waiting_times=True,
+            model="gamma",
+            fix_beta=fix_beta,
+            loss=loss_pdf,
+        )
+        output["beta"] = 1.0 / output["gamma"]
+    else:
+        (
+            output["gamma"],
+            output["beta"],
+            output["gamma_err"],
+            output["beta_err"],
+        ) = fit_interevent_pdf(
+            wt_bins,
+            wt_pdf,
+            tau_max_fit=normalized_tau_max,
+            tau_min_fit=normalized_tau_min,
+            normalized_waiting_times=True,
+            model="gamma",
+            fix_beta=fix_beta,
+            loss=loss_pdf,
+        )
+
+    # fit fractal model to occupation probability
+    _, _, _, _, fractal_model_parameters = occupation_analysis(
+        timings,
+        plot_above=2.0,
+        model="fractal",
+        normalized_tau_min=normalized_tau_min,
+        normalized_tau_max=normalized_tau_max,
+        base_log=base_log,
+        shortest_resolved_interevent_time=shortest_resolved_time,
+        return_figure=False,
+        loss=loss_phi,
+    )
+    # output["n"], output["tau_c"], output["alpha"], output["n_err"], output["tau_c_err"], output["alpha_err"] = fit_interevent_pdf(
+    #     wt_bins,
+    #     wt_pdf,
+    #     tau_max_fit=normalized_tau_max,
+    #     tau_min_fit=normalized_tau_min,
+    #     model="fractal",
+    #     fix_beta=fix_beta
+    # )
+
+    output["n"] = fractal_model_parameters["n"]
+    output["n_err"] = fractal_model_parameters["n_err"]
+    output["tau_c"] = fractal_model_parameters["tau_c"]
+    output["tau_c_err"] = fractal_model_parameters["tau_c_err"]
+    output["alpha"] = fractal_model_parameters["alpha"]
+    output["alpha_err"] = fractal_model_parameters["alpha_err"]
+    output["fractal_rms"] = fractal_model_parameters["rms"]
+    output["theta_min"] = fractal_model_parameters["theta_min"]
+    output["D_tau"] = 1.0 - output["n"]
+    output["D_tau_err"] = output["n_err"]
+    output["rms"] = fractal_model_parameters["rms"]
+    output["var_reduction"] = fractal_model_parameters["var_reduction"]
+    return output
+
+def run_occupation_analysis2(
+    timings,
+    normalized_tau_min,
+    normalized_tau_max,
+    min_num_events=5,
+    nbins_wt=20,
+    shortest_resolved_time=5.0,
+    #fix_beta=True,
+    loss_phi="l2_log",
+    base_log=2.0,
+    num_resamplings=50,
+):
+    """
+    Perform occupation analysis on event timings and inter-event times.
+
+    Parameters:
+    -----------
+    timings : numpy.ndarray
+        Array of event timings.
+    normalized_tau_min : float
+        Minimum normalized time bin size and inter-event time.
+    normalized_tau_max : float
+        Maximum normalized time bin size and inter-event time.
+    min_num_events : int, optional
+        Minimum number of events for analysis (default is 5).
+    nbins_wt : int, optional
+        Number of bins for the inter-event time PDF (default is 20).
+    shortest_resolved_time : float, optional
+        Minimum resolved inter-event time (default is 5.0).
+    loss_phi : str, optional
+        Loss function for occupation probability fractal model fitting (default is "l2_log").
+    base_log : float, optional
+        Base for logarithm used in bin log spacing (default is 2.0).
+    num_resamplings : int, optional
+        Number of resampling iterations (default is 50).
+
+    Returns:
+    --------
+    dict
+        A dictionary containing the results of the occupation analysis, including
+        occupation probability, inter-event time PDF, gamma model parameters, and
+        fractal model parameters.
+
+    Notes:
+    ------
+    This function computes occupation probability, inter-event time PDF, fits a
+    gamma and fractal models to occupation probability. It returns the results
+    as a dictionary.
+    """
+    output = {}
+    # compute occupation probability
+    Phi, Phi_lower, Phi_upper, tau = compute_occupation_probability(
+        timings,
+        normalized_tau_min=normalized_tau_min,
+        normalized_tau_max=normalized_tau_max,
+        base_log=base_log,
+        min_num_events=min_num_events,
+        shortest_resolved_interevent_time=shortest_resolved_time,
+        num_resamplings=num_resamplings,
+    )
+    output["Phi"] = Phi
+    output["Phi_lower"] = Phi_lower
+    output["Phi_upper"] = Phi_upper
+    output["tau"] = tau
+    # compute inter-event time pdf
+    waiting_times = timings[1:] - timings[:-1]
+    wt_bins = np.logspace(np.log10(tau.min()), np.log10(tau.max()), nbins_wt)
+    wt_pdf, wt_bins = interevent_pdf(
+        waiting_times / waiting_times.mean(), return_midbins=True, bins=wt_bins
+    )
+    output["wt_pdf"] = wt_pdf
+    output["wt_bins"] = wt_bins
+    output["wt_mean"] = waiting_times.mean()
+
+
+    # fit gamma model to occupation probability
+    _, _, _, _, gamma_model_parameters = occupation_analysis(
+        timings,
+        plot_above = 2.,
+        model="gamma",
+        normalized_tau_min=normalized_tau_min,
+        normalized_tau_max=normalized_tau_max,
+        base_log=base_log,
+        shortest_resolved_interevent_time=shortest_resolved_time,
+        return_figure=False,
+        loss=loss_phi,
+    )
+    output["gamma"] = gamma_model_parameters["gamma"]
+    output["gamma_err"] = gamma_model_parameters["gamma_err"]
+    output["gamma_rms"] = gamma_model_parameters["rms"]
+    output["beta"] = 1. / gamma_model_parameters["gamma"]
+
+    # fit fractal model to occupation probability
+    _, _, _, _, fractal_model_parameters = occupation_analysis(
+        timings,
+        plot_above=2.0,
+        model="fractal",
+        normalized_tau_min=normalized_tau_min,
+        normalized_tau_max=normalized_tau_max,
+        base_log=base_log,
+        shortest_resolved_interevent_time=shortest_resolved_time,
+        return_figure=False,
+        loss=loss_phi,
+    )
+
+    output["n"] = fractal_model_parameters["n"]
+    output["n_err"] = fractal_model_parameters["n_err"]
+    output["tau_c"] = fractal_model_parameters["tau_c"]
+    output["tau_c_err"] = fractal_model_parameters["tau_c_err"]
+    output["alpha"] = fractal_model_parameters["alpha"]
+    output["alpha_err"] = fractal_model_parameters["alpha_err"]
+    output["fractal_rms"] = fractal_model_parameters["rms"]
+    output["theta_min"] = fractal_model_parameters["theta_min"]
+    output["D_tau"] = 1.0 - output["n"]
+    output["D_tau_err"] = output["n_err"]
+    output["rms"] = fractal_model_parameters["rms"]
+    output["var_reduction"] = fractal_model_parameters["var_reduction"]
+    return output
