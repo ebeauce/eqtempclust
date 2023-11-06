@@ -160,7 +160,9 @@ def compute_occupation_probability(
     )
     # force the last earthquake to be part of the last bin rather than
     # being exactly at time=1
-    rescaled_eq_timings[-1] -= normalized_tau_min / 10.0
+    max_time = rescaled_eq_timings.max() - normalized_tau_min / 100.0
+    # rescaled_eq_timings[-1] -= normalized_tau_min / 10.0
+    rescaled_eq_timings[rescaled_eq_timings > max_time] = max_time
     # -------------------------------
 
     Phi = np.zeros(len(normalized_tau), dtype=np.float32)
@@ -189,6 +191,8 @@ def compute_occupation_probability(
         # print(f"Bin count done. ({occupied_bins.dtype})")
         num_bins = len(occupied_bins)
         Phi[i] = np.sum(occupied_bins) / np.float64(nbins[i])
+        if Phi[i] > 1.0:
+            breakpoint()
         Phi_rsmpl = np.zeros(num_resamplings, dtype=np.float32)
         # resampled_occupied_bins = np.zeros(nbins[i], dtype=bool)
         for j in range(num_resamplings):
@@ -845,13 +849,14 @@ def fit_occupation_probability(
         #        log=True
         #        )
 
-        squared_res = np.sqrt(
-            np.mean(
+        squared_res = np.mean(
+            (
                 log_Phi[selection]
                 - occupation_probability_unconstrained_fractal_model(
                     tau[selection], *popt, log=True
                 )
             )
+            ** 2
         )
         rms = np.sqrt(squared_res)
         var0 = np.var(log_Phi[selection])
@@ -921,8 +926,8 @@ def fit_occupation_probability(
             print("'relative_entropy', 'l2_log'")
             return
 
-        squared_res = np.sqrt(
-            np.mean(log_Phi[selection] - gamma_occupation_log(tau[selection], *popt))
+        squared_res = np.mean(
+            (log_Phi[selection] - gamma_occupation_log(tau[selection], *popt)) ** 2
         )
         rms = np.sqrt(squared_res)
         var0 = np.var(log_Phi[selection])
@@ -1848,6 +1853,7 @@ def run_occupation_analysis1(
     output["var_reduction"] = fractal_model_parameters["var_reduction"]
     return output
 
+
 def run_occupation_analysis2(
     timings,
     normalized_tau_min,
@@ -1855,7 +1861,7 @@ def run_occupation_analysis2(
     min_num_events=5,
     nbins_wt=20,
     shortest_resolved_time=5.0,
-    #fix_beta=True,
+    # fix_beta=True,
     loss_phi="l2_log",
     base_log=2.0,
     num_resamplings=50,
@@ -1922,11 +1928,10 @@ def run_occupation_analysis2(
     output["wt_bins"] = wt_bins
     output["wt_mean"] = waiting_times.mean()
 
-
     # fit gamma model to occupation probability
     _, _, _, _, gamma_model_parameters = occupation_analysis(
         timings,
-        plot_above = 2.,
+        plot_above=2.0,
         model="gamma",
         normalized_tau_min=normalized_tau_min,
         normalized_tau_max=normalized_tau_max,
@@ -1938,7 +1943,7 @@ def run_occupation_analysis2(
     output["gamma"] = gamma_model_parameters["gamma"]
     output["gamma_err"] = gamma_model_parameters["gamma_err"]
     output["gamma_rms"] = gamma_model_parameters["rms"]
-    output["beta"] = 1. / gamma_model_parameters["gamma"]
+    output["beta"] = 1.0 / gamma_model_parameters["gamma"]
 
     # fit fractal model to occupation probability
     _, _, _, _, fractal_model_parameters = occupation_analysis(
