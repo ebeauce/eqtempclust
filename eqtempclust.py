@@ -676,6 +676,7 @@ def fit_occupation_probability(
     model="fractal",
     loss="l2_log",
     average_rate=None,
+    fix_beta=False,
     **kwargs,
 ):
     """
@@ -744,6 +745,8 @@ def fit_occupation_probability(
         "alpha_max": 10.00,
         "gamma_min": 0.0,
         "gamma_max": 1.0,
+        "beta_min": 0.,
+        "beta_max": np.inf,
     }
 
     if model == "linear_spline":
@@ -812,7 +815,6 @@ def fit_occupation_probability(
             )
             popt = results.x
             perr = np.sqrt(np.diag(results.hess_inv.todense()) * results.fun)
-            print(results.status)
         elif loss == "l2_log":
             # define model
             fractal_occupation_log = partial(
@@ -875,7 +877,10 @@ def fit_occupation_probability(
         occupation_parameters["log_tau_c_err"] = abs(1.0 / popt[1]) * perr[1]
         occupation_parameters["alpha"] = popt[2]
         occupation_parameters["alpha_err"] = perr[2]
-        occupation_parameters["theta_min"] = theoretical_theta_min(popt[0], popt[1])
+        #occupation_parameters["theta_min"] = theoretical_theta_min(popt[0], popt[1])
+        occupation_parameters["tau_min"] = tau_min_fractal(
+                *popt,
+                )
         ## physically contrained model:
         # occupation_parameters["alpha"] = popt[1]
         # occupation_parameters["alpha_err"] = perr[1]
@@ -890,7 +895,13 @@ def fit_occupation_probability(
     elif model == "gamma":
         selection = tau >= tau_min
         gamma0 = 0.67
-        p0 = [gamma0]
+        beta0 = 1. / gamma0
+        if fix_beta:
+            p0 = [gamma0]
+            var_names = ["gamma"]
+        else:
+            p0 = [gamma0, beta0]
+            var_names = ["gamma", "beta"]
         # gamma cannot be smaller than 0 because, otherwise, the exponential
         # tail is increasing instead of decreasing
         if loss == "l2_log":
@@ -898,7 +909,13 @@ def fit_occupation_probability(
             gamma_occupation_log = partial(
                 occupation_probability_gamma_model, lamb=average_rate, log=True
             )
-            bounds = (param_bounds["gamma_min"], param_bounds["gamma_max"])
+            if fix_beta:
+                bounds = (param_bounds["gamma_min"], param_bounds["gamma_max"])
+            else:
+                bounds = (
+                        (param_bounds["gamma_min"], param_bounds["beta_min"]),
+                        (param_bounds["gamma_max"], param_bounds["beta_max"])
+                            )
             popt, pcov = curve_fit(
                 gamma_occupation_log,
                 tau[selection],
@@ -917,7 +934,13 @@ def fit_occupation_probability(
                 qk=gamma_occupation(tau[selection], params[0]),
             )
             # call minimize
-            bounds = [(param_bounds["gamma_min"], param_bounds["gamma_max"])]
+            if fix_beta:
+                bounds = [(param_bounds["gamma_min"], param_bounds["gamma_max"])]
+            else:
+                bounds = [
+                        (param_bounds["gamma_min"], param_bounds["gamma_max"]),
+                        (param_bounds["beta_min"], param_bounds["beta_max"]),
+                        ]
             results = scipy.optimize.minimize(loss, p0, bounds=bounds)
             popt = results.x
             perr = np.sqrt(np.diag(results.hess_inv.todense()) * results.fun)
@@ -933,14 +956,13 @@ def fit_occupation_probability(
         var0 = np.var(log_Phi[selection])
         var_reduction = 1.0 - squared_res / var0
 
-        # for i, attr in enumerate(["gamma", "beta"]):
-        for i, attr in enumerate(["gamma"]):
+        for i, attr in enumerate(var_names):
             occupation_parameters[attr] = popt[i]
             occupation_parameters[f"{attr}_err"] = perr[i]
-        occupation_parameters["beta"] = 1.0 / occupation_parameters["gamma"]
-        occupation_parameters["beta_err"] = (
-            abs(1.0 / occupation_parameters["gamma"] ** 2) * perr[0]
-        )
+        #occupation_parameters["beta"] = 1.0 / occupation_parameters["gamma"]
+        #occupation_parameters["beta_err"] = (
+        #    abs(1.0 / occupation_parameters["gamma"] ** 2) * perr[0]
+        #)
         occupation_parameters["rms"] = rms
         occupation_parameters["var_reduction"] = var_reduction
     return occupation_parameters
@@ -1027,62 +1049,6 @@ def kullback_leibler_divergence(ref_density_function, test_density_function):
     return unnormalized_kl_div / norm
 
 
-def gamma_waiting_times(
-    waiting_time, gamma, beta=None, normalized=True, log=False, C="theoretical"
-):
-    """
-    Returns the value of the gamma distribution function at a given point.
-
-    Parameters
-    ----------
-    waiting_time : float
-        The waiting times at which to evaluate the gamma distribution function.
-    gamma : float
-        The shape parameter of the gamma distribution.
-    beta : float
-        The scale parameter of the gamma distribution.
-    log : string, optional
-        If True, returns the base-10 logarithm of the gamma distribution.
-
-    Returns
-    -------
-    float
-        The value of the gamma distribution function evaluated at `tau`.
-
-    Notes
-    -----
-    Following Corral (2004) and Hainzl et al. (2006), the gamma distribution
-    is defined as:
-
-        f(tau; gamma, beta) = C * tau**(gamma - 1) * exp(-tau / beta)
-
-    where `C` is a normalization factor and is a function of `gamma` and `beta,
-    `gamma` is the shape parameter, `beta` is the scale parameter, and `exp` is
-    the exponential function.
-    """
-    if normalized:
-        # assume that the average waiting time is one
-        # therefore beta = 1/gamma
-        beta = 1.0 / gamma
-    elif beta is None:
-        raise ("beta should not be None is the average waiting time is not one")
-    if C == "theoretical":
-        C = theoretical_C(gamma, beta)
-    elif C == "truncated":
-        C = truncated_C(gamma, beta, waiting_time.min(), waiting_time.max())
-    # print(f"C is {C:.2f}")
-    # print(gamma - 1.0)
-    # print(np.exp(-waiting_time / beta))
-    # print(waiting_time ** (gamma - 1.0))
-    # print("out", C * waiting_time ** (gamma - 1.0) * np.exp(-waiting_time / beta))
-    if log:
-        return np.log10(
-            C * waiting_time ** (gamma - 1.0) * np.exp(-waiting_time / beta)
-        )
-    else:
-        return C * waiting_time ** (gamma - 1.0) * np.exp(-waiting_time / beta)
-
-
 def lower_incomplete_gamma(a, x):
     return scispec.gamma(a) * scispec.gammainc(a, x)
 
@@ -1137,21 +1103,6 @@ def _dlogPhi_dlogtau(tau, gamma):
         - gtau**gamma / upper_incomplete_gamma(gamma, gtau)
     ) * np.exp(-gtau)
     return loglog_slope
-
-
-def fractal_waiting_times(w, n, tau_c, alpha, log=False):
-    """ """
-    omega = (tau_c / w) ** (n * alpha)
-    pdf = (
-        (n / w**2)
-        * omega
-        * (1.0 / (1.0 + omega) ** (1.0 / alpha + 2.0))
-        * (1.0 + n * alpha + (1.0 - n) * omega)
-    )
-    if log:
-        return np.log10(pdf)
-    else:
-        return pdf
 
 
 def occupation_probability_unconstrained_fractal_model(tau, n, tau_c, alpha, log=False):
@@ -1234,6 +1185,23 @@ def occupation_probability_constrained_fractal_model(
 
 
 def theoretical_C(gamma, beta):
+    """Normalization pre-factor in the gamma pdf.
+
+    Calculates the normalization pre-factor so that the integral
+    of the pdf over its support is 1.
+
+    Parameters
+    ----------
+    gamma : float
+        Shape parameter.
+    beta : float
+        Rate parameter.
+
+    Returns
+    -------
+    float
+        Normalization pre-factor.
+    """
     return beta ** (-gamma) / scispec.gamma(gamma)
 
 
@@ -1244,8 +1212,7 @@ def theoretical_tau_c(n, normalized_tau_min):
     log_tau_c = 1.0 / n * (np.log(n) + (n - 1) * log_theta_min)
     return np.exp(log_tau_c)
 
-
-def theoretical_theta_min(n, tau_c):
+def theoretical_theta_min(n, tau_c, lbd=1.):
     if n > 1:
         print("n should be between 0 and 1. Cannot calculate theta_min.")
         return
@@ -1254,14 +1221,64 @@ def theoretical_theta_min(n, tau_c):
         # therefore the smallest waiting time is zero
         return 0.0
     log_tau_c = np.log10(tau_c)
-    log_theta_min = (np.log10(n) - n * log_tau_c) / (1.0 - n)
+    log_theta_min = 1. / (n - 1.) * (np.log10(lbd / n) + n * log_tau_c)
+    #log_theta_min = 1./(n - 1.) * np.log10(lbd * tau_c / n)
     if log_theta_min > log_tau_c - 2.0:
         print("Warning! The assumption that theta_min << theta_c was broken.")
         print(f"log theta_min={log_theta_min:.2f} vs log tau_c={log_tau_c:.2f}")
     return 10.0**log_theta_min
 
+def tau_min_newton(n, tau_c, alpha, lbd=1.):
+    from scipy.optimize import newton
+    #equation = lambda tau_min: (
+    #        1. - n / (tau_min * lbd) * (tau_c/tau_min)**(n*alpha) * (1. +
+    #            (tau_c/tau_min)**(n*alpha))**(-1./alpha - 1.)
+    #        )
+    equation = lambda tau_min: (
+            np.log10(n/lbd) - np.log10(tau_min) + n * alpha * np.log10(tau_min)
+            - (1./alpha + 1.) * np.log10(1. + (tau_c / tau_min)**(n*alpha))
+            )
+    p0 = 1.
+    root = newton(equation, p0)
+    return root
+
+
+#def theoretical_theta_min(n, tau_c, lbd=1.):
+#    if n > 1:
+#        print("n should be between 0 and 1. Cannot calculate theta_min.")
+#        return
+#    elif np.round(n, decimals=4) == 1:
+#        # the cdf is defined at 0 and cdf(0) = 0, tau_c = n = 1
+#        # therefore the smallest waiting time is zero
+#        return 0.0
+#    log_tau_c = np.log10(tau_c)
+#    print(n, n * log_tau_c, np.log10(n))
+#    log_theta_min = (np.log10(n) - n * log_tau_c) / (1.0 - n)
+#    if log_theta_min > log_tau_c - 2.0:
+#        print("Warning! The assumption that theta_min << theta_c was broken.")
+#        print(f"log theta_min={log_theta_min:.2f} vs log tau_c={log_tau_c:.2f}")
+#    return 10.0**log_theta_min
+
 
 def truncated_C(gamma, beta, tau_min, tau_max):
+    """Normalization pre-factor in the gamma pdf over a truncated support.
+
+    Calculates the normalization pre-factor so that the integral
+    of the pdf over its truncated support, from `tau_min` to `tau_max` is 1.
+
+    Parameters
+    ----------
+    gamma : float
+        Shape parameter.
+    beta : float
+        Rate parameter.
+
+    Returns
+    -------
+    float
+        Normalization pre-factor.
+
+    """
     return beta ** (-gamma) / (
         upper_incomplete_gamma(gamma, tau_min / beta)
         - upper_incomplete_gamma(gamma, tau_max / beta)
@@ -1550,6 +1567,100 @@ def occupation_Poissonian_uncertainty(
         uncertainty[i] *= binom(n_bins, n_bins - num_occupied_bins)
     return possible_fractions, uncertainty
 
+
+# ===============================================================
+#                       Models
+# ===============================================================
+def cdf_fractal(w, D_tau, tau_c, alpha, lbd=1.):
+    n = 1. - D_tau
+    A = (tau_c / w) ** (n * alpha)
+    return 1. - n / lbd * w**(-1) * A * (1 + A)**(-1/alpha - 1)
+
+def tau_min_fractal(D_tau, tau_c, alpha, lbd=1.):
+    fun = partial(cdf_fractal, D_tau=D_tau, tau_c=tau_c, alpha=alpha, lbd=lbd)
+    fprime = partial(
+            fractal_waiting_times, n=1.-D_tau, tau_c=tau_c, alpha=alpha, lbd=lbd
+            )
+    p0 = float(tau_c)
+    while fun(p0 / 10.) > 0.:
+        p0 /= 10.
+    while fun(p0 / 2.) > 0.:
+        p0 /= 2.
+
+    try:
+        root = scipy.optimize.newton(fun, p0, maxiter=500, fprime=fprime)
+        #root = scipy.optimize.newton(fun, p0, maxiter=500)
+    except Exception as e:
+        print(f"Could not determine tau_min, returning p0={p0:.2e}")
+        print(e)
+        return p0
+    #print(root)
+    return root
+
+def gamma_waiting_times(
+    waiting_time, gamma, beta=None, normalized=True, log=False, C="theoretical"
+):
+    """
+    Returns the value of the gamma distribution function at a given point.
+
+    Parameters
+    ----------
+    waiting_time : float
+        The waiting times at which to evaluate the gamma distribution function.
+    gamma : float
+        The shape parameter of the gamma distribution.
+    beta : float
+        The scale parameter of the gamma distribution.
+    log : string, optional
+        If True, returns the base-10 logarithm of the gamma distribution.
+
+    Returns
+    -------
+    float
+        The value of the gamma distribution function evaluated at `tau`.
+
+    Notes
+    -----
+    Following Corral (2004) and Hainzl et al. (2006), the gamma distribution
+    is defined as:
+
+        f(tau; gamma, beta) = C * tau**(gamma - 1) * exp(-tau / beta)
+
+    where `C` is a normalization factor and is a function of `gamma` and `beta,
+    `gamma` is the shape parameter, `beta` is the scale parameter, and `exp` is
+    the exponential function.
+    """
+    if normalized:
+        # assume that the average waiting time is one
+        # therefore beta = 1/gamma
+        beta = 1.0 / gamma
+    elif beta is None:
+        raise ("beta should not be None is the average waiting time is not one")
+    if C == "theoretical":
+        C = theoretical_C(gamma, beta)
+    elif C == "truncated":
+        C = truncated_C(gamma, beta, waiting_time.min(), waiting_time.max())
+    if log:
+        return np.log10(
+            C * waiting_time ** (gamma - 1.0) * np.exp(-waiting_time / beta)
+        )
+    else:
+        return C * waiting_time ** (gamma - 1.0) * np.exp(-waiting_time / beta)
+
+
+def fractal_waiting_times(w, n, tau_c, alpha, lbd=1.0, log=False):
+    """ """
+    omega = (tau_c / w) ** (n * alpha)
+    pdf = (
+        (n / (lbd * w**2) )
+        * omega
+        * (1.0 / (1.0 + omega) ** (1.0 / alpha + 2.0))
+        * (1.0 + n * alpha + (1.0 - n) * omega)
+    )
+    if log:
+        return np.log10(pdf)
+    else:
+        return pdf
 
 # ===============================================================
 #               TIME DEPENDENT ANALYSIS
@@ -1846,7 +1957,7 @@ def run_occupation_analysis1(
     output["alpha"] = fractal_model_parameters["alpha"]
     output["alpha_err"] = fractal_model_parameters["alpha_err"]
     output["fractal_rms"] = fractal_model_parameters["rms"]
-    output["theta_min"] = fractal_model_parameters["theta_min"]
+    output["tau_min"] = fractal_model_parameters["tau_min"]
     output["D_tau"] = 1.0 - output["n"]
     output["D_tau_err"] = output["n_err"]
     output["rms"] = fractal_model_parameters["rms"]
@@ -1861,7 +1972,7 @@ def run_occupation_analysis2(
     min_num_events=5,
     nbins_wt=20,
     shortest_resolved_time=5.0,
-    # fix_beta=True,
+    fix_beta=False,
     loss_phi="l2_log",
     base_log=2.0,
     num_resamplings=50,
@@ -1937,13 +2048,21 @@ def run_occupation_analysis2(
         normalized_tau_max=normalized_tau_max,
         base_log=base_log,
         shortest_resolved_interevent_time=shortest_resolved_time,
+        fix_beta=fix_beta,
         return_figure=False,
         loss=loss_phi,
     )
     output["gamma"] = gamma_model_parameters["gamma"]
     output["gamma_err"] = gamma_model_parameters["gamma_err"]
     output["gamma_rms"] = gamma_model_parameters["rms"]
-    output["beta"] = 1.0 / gamma_model_parameters["gamma"]
+    if "beta" in gamma_model_parameters:
+        output["beta"] = gamma_model_parameters["beta"]
+        output["beta_err"] = gamma_model_parameters["beta_err"]
+    else:
+        output["beta"] = 1.0 / gamma_model_parameters["gamma"]
+        output["beta_err"] = (
+            abs(1.0 / output["gamma"] ** 2) * output["gamma_err"]
+        )
 
     # fit fractal model to occupation probability
     _, _, _, _, fractal_model_parameters = occupation_analysis(
@@ -1965,9 +2084,8 @@ def run_occupation_analysis2(
     output["alpha"] = fractal_model_parameters["alpha"]
     output["alpha_err"] = fractal_model_parameters["alpha_err"]
     output["fractal_rms"] = fractal_model_parameters["rms"]
-    output["theta_min"] = fractal_model_parameters["theta_min"]
+    output["tau_min"] = fractal_model_parameters["tau_min"]
     output["D_tau"] = 1.0 - output["n"]
     output["D_tau_err"] = output["n_err"]
-    output["rms"] = fractal_model_parameters["rms"]
     output["var_reduction"] = fractal_model_parameters["var_reduction"]
     return output
