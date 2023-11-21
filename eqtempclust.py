@@ -1051,45 +1051,6 @@ def upper_incomplete_gamma(a, x):
     return scispec.gamma(a) * scispec.gammaincc(a, x)
 
 
-def occupation_probability_unconstrained_gamma_model(tau, gamma, beta, lamb, log=False):
-    Phi_tau = (lamb * tau) / (beta * gamma) * scispec.gammaincc(
-        gamma, lamb * tau / beta
-    ) + scispec.gammainc(gamma + 1.0, lamb * tau / beta)
-    if log:
-        return np.log10(Phi_tau)
-    else:
-        return Phi_tau
-
-
-def occupation_probability_gamma_model(tau, gamma, beta=None, lamb=None, log=False):
-    """Occupation probability of a time interval with length `tau`."""
-    if lamb is None:
-        lamb = 1.0
-    if beta is None and np.abs(lamb - 1.0) < 0.01:
-        # lambda = 1, beta = 1/gamma
-        Phi_tau = tau * scispec.gammaincc(gamma, gamma * tau) + scispec.gammainc(
-            gamma + 1.0, gamma * tau
-        )
-    elif beta is None:
-        # beta = 1/gamma
-        Phi_tau = (lamb * tau) * scispec.gammaincc(
-            gamma, lamb * gamma * tau
-        ) + scispec.gammainc(gamma + 1.0, lamb * gamma * tau)
-    elif lamb is None or np.abs(lamb - 1.0) < 0.01:
-        # lamb = 1
-        Phi_tau = tau / (beta * gamma) * scispec.gammaincc(
-            gamma, tau / beta
-        ) + scispec.gammainc(gamma + 1.0, tau / beta)
-    else:
-        Phi_tau = (lamb * tau) / (beta * gamma) * scispec.gammaincc(
-            gamma, lamb * tau / beta
-        ) + scispec.gammainc(gamma + 1.0, lamb * tau / beta)
-    if log:
-        return np.log10(Phi_tau)
-    else:
-        return Phi_tau
-
-
 def _dlogPhi_dlogtau(tau, gamma):
     gtau = gamma * tau
     loglog_slope = 1.0 + (
@@ -1098,100 +1059,43 @@ def _dlogPhi_dlogtau(tau, gamma):
     ) * np.exp(-gtau)
     return loglog_slope
 
-def occupation_probability_fractal_model(tau, n, tau_c, alpha, log=False):
-    """
-    Compute the occupation probability of a fractal model for given interval sizes `tau`.
 
-    Parameters
-    ----------
-    tau : array_like
-        Array of time interval sizes.
-    n : float
-        Fractal dimensionality parameter.
-    tau_c : float
-        Cutoff time scale.
-    alpha : float
-        Scaling exponent which controls the sharpness of the cutoff.
-    log : bool, optional
-        Whether to return the logarithm of the occupation probability.
-        Default is False.
-
-    Returns
-    -------
-    array_like
-        Occupation probability values corresponding to each interval size value.
-
-    Notes
-    -----
-    The occupation probability of a fractal model as a function of
-    interval size is given by:
-
-    p(tau) = (1 + (tau_c / tau)^(n * alpha))^(-1 / alpha)  if log = False
-    p(tau) = -1 / alpha * log10(1 + (tau_c / tau)^(n * alpha)) if log = True
-    """
-    if log:
-        return -1.0 / alpha * np.log10(1.0 + (tau_c / tau) ** (n * alpha))
-    else:
-        return np.power(1.0 / (1.0 + (tau_c / tau) ** (n * alpha)), 1.0 / alpha)
-
-
-def theoretical_C(gamma, beta):
-    """Normalization pre-factor in the gamma pdf.
-
-    Calculates the normalization pre-factor so that the integral
-    of the pdf over its support is 1.
-
-    Parameters
-    ----------
-    gamma : float
-        Shape parameter.
-    beta : float
-        Rate parameter.
-
-    Returns
-    -------
-    float
-        Normalization pre-factor.
-    """
-    return beta ** (-gamma) / scispec.gamma(gamma)
-
-
-def theoretical_tau_c(n, normalized_tau_min):
-    if n == 1:
-        return 1.0
-    log_theta_min = np.log(normalized_tau_min)
-    log_tau_c = 1.0 / n * (np.log(n) + (n - 1) * log_theta_min)
-    return np.exp(log_tau_c)
-
-def theoretical_theta_min(n, tau_c, lbd=1.):
-    if n > 1:
-        print("n should be between 0 and 1. Cannot calculate theta_min.")
-        return
-    elif np.round(n, decimals=4) == 1:
-        # the cdf is defined at 0 and cdf(0) = 0, tau_c = n = 1
-        # therefore the smallest waiting time is zero
-        return 0.0
-    log_tau_c = np.log10(tau_c)
-    log_theta_min = 1. / (n - 1.) * (np.log10(lbd / n) + n * log_tau_c)
-    #log_theta_min = 1./(n - 1.) * np.log10(lbd * tau_c / n)
-    if log_theta_min > log_tau_c - 2.0:
-        print("Warning! The assumption that theta_min << theta_c was broken.")
-        print(f"log theta_min={log_theta_min:.2f} vs log tau_c={log_tau_c:.2f}")
-    return 10.0**log_theta_min
-
-def tau_min_newton(n, tau_c, alpha, lbd=1.):
-    from scipy.optimize import newton
-    #equation = lambda tau_min: (
-    #        1. - n / (tau_min * lbd) * (tau_c/tau_min)**(n*alpha) * (1. +
-    #            (tau_c/tau_min)**(n*alpha))**(-1./alpha - 1.)
-    #        )
-    equation = lambda tau_min: (
-            np.log10(n/lbd) - np.log10(tau_min) + n * alpha * np.log10(tau_min)
-            - (1./alpha + 1.) * np.log10(1. + (tau_c / tau_min)**(n*alpha))
-            )
-    p0 = 1.
-    root = newton(equation, p0)
-    return root
+#def theoretical_tau_c(n, normalized_tau_min):
+#    if n == 1:
+#        return 1.0
+#    log_theta_min = np.log(normalized_tau_min)
+#    log_tau_c = 1.0 / n * (np.log(n) + (n - 1) * log_theta_min)
+#    return np.exp(log_tau_c)
+#
+#def theoretical_theta_min(n, tau_c, lbd=1.):
+#    if n > 1:
+#        print("n should be between 0 and 1. Cannot calculate theta_min.")
+#        return
+#    elif np.round(n, decimals=4) == 1:
+#        # the cdf is defined at 0 and cdf(0) = 0, tau_c = n = 1
+#        # therefore the smallest waiting time is zero
+#        return 0.0
+#    log_tau_c = np.log10(tau_c)
+#    log_theta_min = 1. / (n - 1.) * (np.log10(lbd / n) + n * log_tau_c)
+#    #log_theta_min = 1./(n - 1.) * np.log10(lbd * tau_c / n)
+#    if log_theta_min > log_tau_c - 2.0:
+#        print("Warning! The assumption that theta_min << theta_c was broken.")
+#        print(f"log theta_min={log_theta_min:.2f} vs log tau_c={log_tau_c:.2f}")
+#    return 10.0**log_theta_min
+#
+#def tau_min_newton(n, tau_c, alpha, lbd=1.):
+#    from scipy.optimize import newton
+#    #equation = lambda tau_min: (
+#    #        1. - n / (tau_min * lbd) * (tau_c/tau_min)**(n*alpha) * (1. +
+#    #            (tau_c/tau_min)**(n*alpha))**(-1./alpha - 1.)
+#    #        )
+#    equation = lambda tau_min: (
+#            np.log10(n/lbd) - np.log10(tau_min) + n * alpha * np.log10(tau_min)
+#            - (1./alpha + 1.) * np.log10(1. + (tau_c / tau_min)**(n*alpha))
+#            )
+#    p0 = 1.
+#    root = newton(equation, p0)
+#    return root
 
 
 #def theoretical_theta_min(n, tau_c, lbd=1.):
@@ -1209,31 +1113,6 @@ def tau_min_newton(n, tau_c, alpha, lbd=1.):
 #        print("Warning! The assumption that theta_min << theta_c was broken.")
 #        print(f"log theta_min={log_theta_min:.2f} vs log tau_c={log_tau_c:.2f}")
 #    return 10.0**log_theta_min
-
-
-def truncated_C(gamma, beta, tau_min, tau_max):
-    """Normalization pre-factor in the gamma pdf over a truncated support.
-
-    Calculates the normalization pre-factor so that the integral
-    of the pdf over its truncated support, from `tau_min` to `tau_max` is 1.
-
-    Parameters
-    ----------
-    gamma : float
-        Shape parameter.
-    beta : float
-        Rate parameter.
-
-    Returns
-    -------
-    float
-        Normalization pre-factor.
-
-    """
-    return beta ** (-gamma) / (
-        upper_incomplete_gamma(gamma, tau_min / beta)
-        - upper_incomplete_gamma(gamma, tau_max / beta)
-    )
 
 
 def interevent_pdf(
@@ -1523,6 +1402,45 @@ def occupation_Poissonian_uncertainty(
 #                       Models
 # ===============================================================
 
+
+# ----------------------- fractal
+
+def occupation_probability_fractal_model(tau, n, tau_c, alpha, log=False):
+    """
+    Compute the occupation probability of a fractal model for given interval sizes `tau`.
+
+    Parameters
+    ----------
+    tau : array_like
+        Array of time interval sizes.
+    n : float
+        Fractal dimensionality parameter.
+    tau_c : float
+        Cutoff time scale.
+    alpha : float
+        Scaling exponent which controls the sharpness of the cutoff.
+    log : bool, optional
+        Whether to return the logarithm of the occupation probability.
+        Default is False.
+
+    Returns
+    -------
+    array_like
+        Occupation probability values corresponding to each interval size value.
+
+    Notes
+    -----
+    The occupation probability of a fractal model as a function of
+    interval size is given by:
+
+    p(tau) = (1 + (tau_c / tau)^(n * alpha))^(-1 / alpha)  if log = False
+    p(tau) = -1 / alpha * log10(1 + (tau_c / tau)^(n * alpha)) if log = True
+    """
+    if log:
+        return -1.0 / alpha * np.log10(1.0 + (tau_c / tau) ** (n * alpha))
+    else:
+        return np.power(1.0 / (1.0 + (tau_c / tau) ** (n * alpha)), 1.0 / alpha)
+
 def cdf_fractal(w, D_tau, tau_c, alpha, lbd=1.):
     n = 1. - D_tau
     A = (tau_c / w) ** (n * alpha)
@@ -1548,6 +1466,141 @@ def tau_min_fractal(D_tau, tau_c, alpha, lbd=1.):
         return p0
     #print(root)
     return root
+
+def fractal_waiting_times(w, n, tau_c, alpha, lbd=1.0, tau_min=None, log=False):
+    """
+    Parameters
+    ----------
+    w : numpy.ndarray or list
+        Earthquake waiting times.
+    n : float
+        Short waiting times exponent. The asymptotic behavior of the pdf
+        at short waiting times is entirely controlled by `n`:
+            `pdf ~ w**-(2-n)`
+        `n` is related to the "fractal dimension" `D_tau`: `n = 1 - D_tau`
+    tau_c : float
+        Cross-over time from the short waiting time behavior `pdf ~ w**-(2-n)`
+        to the long waiting time behavior `pdf ~ w**-(2+n*alpha)`
+    alpha : float
+        Long waiting times exponent. The asymptotic behavior of the pdf
+        at long waiting times is controlled both by `n` and `alpha`:
+            `pdf ~ w**-(2+n*alpha)`
+    lbd : float, optional
+        Average rate of seismicity, that is, the inverse of the expected waiting
+        time. Default to 1 (i.e., assumes that waiting times are normalized).
+    tau_min : float or None, optional
+        If not None (default), the support of the pdf is defined between `tau_min` and
+        infinity. Note that this model usually requires `tau_min > 0` in order
+        to satisfies the definition of a pdf.
+    log : boolean, optional
+        If True, returns the logarithm of pdf. Defaults to False.
+
+    Returns
+    -------
+    pdf : numpy.ndarray
+        Probability density function of waiting times. If `log=True`, it
+        returns the logarithm (base 10) of the pdf.
+    """
+    w = np.asarray(w)
+    omega = (tau_c / w) ** (n * alpha)
+    pdf = (
+        (n / (lbd * w**2) )
+        * omega
+        * (1.0 / (1.0 + omega) ** (1.0 / alpha + 2.0))
+        * (1.0 + n * alpha + (1.0 - n) * omega)
+    )
+    if tau_min is not None:
+        # define the lower bound of the pdf's support
+        pdf[w < tau_min] = 0.
+    if log:
+        return np.log10(pdf)
+    else:
+        return pdf
+
+# -------------------------- gamma
+
+
+def occupation_probability_unconstrained_gamma_model(tau, gamma, beta, lamb, log=False):
+    Phi_tau = (lamb * tau) / (beta * gamma) * scispec.gammaincc(
+        gamma, lamb * tau / beta
+    ) + scispec.gammainc(gamma + 1.0, lamb * tau / beta)
+    if log:
+        return np.log10(Phi_tau)
+    else:
+        return Phi_tau
+
+
+def occupation_probability_gamma_model(tau, gamma, beta=None, lamb=None, log=False):
+    """Occupation probability of a time interval with length `tau`."""
+    if lamb is None:
+        lamb = 1.0
+    if beta is None and np.abs(lamb - 1.0) < 0.01:
+        # lambda = 1, beta = 1/gamma
+        Phi_tau = tau * scispec.gammaincc(gamma, gamma * tau) + scispec.gammainc(
+            gamma + 1.0, gamma * tau
+        )
+    elif beta is None:
+        # beta = 1/gamma
+        Phi_tau = (lamb * tau) * scispec.gammaincc(
+            gamma, lamb * gamma * tau
+        ) + scispec.gammainc(gamma + 1.0, lamb * gamma * tau)
+    elif lamb is None or np.abs(lamb - 1.0) < 0.01:
+        # lamb = 1
+        Phi_tau = tau / (beta * gamma) * scispec.gammaincc(
+            gamma, tau / beta
+        ) + scispec.gammainc(gamma + 1.0, tau / beta)
+    else:
+        Phi_tau = (lamb * tau) / (beta * gamma) * scispec.gammaincc(
+            gamma, lamb * tau / beta
+        ) + scispec.gammainc(gamma + 1.0, lamb * tau / beta)
+    if log:
+        return np.log10(Phi_tau)
+    else:
+        return Phi_tau
+
+def truncated_C(gamma, beta, tau_min, tau_max):
+    """Normalization pre-factor in the gamma pdf over a truncated support.
+
+    Calculates the normalization pre-factor so that the integral
+    of the pdf over its truncated support, from `tau_min` to `tau_max` is 1.
+
+    Parameters
+    ----------
+    gamma : float
+        Shape parameter.
+    beta : float
+        Rate parameter.
+
+    Returns
+    -------
+    float
+        Normalization pre-factor.
+
+    """
+    return beta ** (-gamma) / (
+        upper_incomplete_gamma(gamma, tau_min / beta)
+        - upper_incomplete_gamma(gamma, tau_max / beta)
+    )
+
+def theoretical_C(gamma, beta):
+    """Normalization pre-factor in the gamma pdf.
+
+    Calculates the normalization pre-factor so that the integral
+    of the pdf over its support is 1.
+
+    Parameters
+    ----------
+    gamma : float
+        Shape parameter.
+    beta : float
+        Rate parameter.
+
+    Returns
+    -------
+    float
+        Normalization pre-factor.
+    """
+    return beta ** (-gamma) / scispec.gamma(gamma)
 
 def gamma_waiting_times(
     waiting_time, gamma, beta=None, normalized=True, log=False, C="theoretical"
@@ -1614,55 +1667,6 @@ def gamma_waiting_times(
         return C * waiting_time ** (gamma - 1.0) * np.exp(-waiting_time / beta)
 
 
-def fractal_waiting_times(w, n, tau_c, alpha, lbd=1.0, tau_min=None, log=False):
-    """
-    Parameters
-    ----------
-    w : numpy.ndarray or list
-        Earthquake waiting times.
-    n : float
-        Short waiting times exponent. The asymptotic behavior of the pdf
-        at short waiting times is entirely controlled by `n`:
-            `pdf ~ w**-(2-n)`
-        `n` is related to the "fractal dimension" `D_tau`: `n = 1 - D_tau`
-    tau_c : float
-        Cross-over time from the short waiting time behavior `pdf ~ w**-(2-n)`
-        to the long waiting time behavior `pdf ~ w**-(2+n*alpha)`
-    alpha : float
-        Long waiting times exponent. The asymptotic behavior of the pdf
-        at long waiting times is controlled both by `n` and `alpha`:
-            `pdf ~ w**-(2+n*alpha)`
-    lbd : float, optional
-        Average rate of seismicity, that is, the inverse of the expected waiting
-        time. Default to 1 (i.e., assumes that waiting times are normalized).
-    tau_min : float or None, optional
-        If not None (default), the support of the pdf is defined between `tau_min` and
-        infinity. Note that this model usually requires `tau_min > 0` in order
-        to satisfies the definition of a pdf.
-    log : boolean, optional
-        If True, returns the logarithm of pdf. Defaults to False.
-
-    Returns
-    -------
-    pdf : numpy.ndarray
-        Probability density function of waiting times. If `log=True`, it
-        returns the logarithm (base 10) of the pdf.
-    """
-    w = np.asarray(w)
-    omega = (tau_c / w) ** (n * alpha)
-    pdf = (
-        (n / (lbd * w**2) )
-        * omega
-        * (1.0 / (1.0 + omega) ** (1.0 / alpha + 2.0))
-        * (1.0 + n * alpha + (1.0 - n) * omega)
-    )
-    if tau_min is not None:
-        # define the lower bound of the pdf's support
-        pdf[w < tau_min] = 0.
-    if log:
-        return np.log10(pdf)
-    else:
-        return pdf
 
 # ===============================================================
 #               TIME DEPENDENT ANALYSIS
