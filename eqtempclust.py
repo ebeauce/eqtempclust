@@ -1571,6 +1571,7 @@ def occupation_Poissonian_uncertainty(
 # ===============================================================
 #                       Models
 # ===============================================================
+
 def cdf_fractal(w, D_tau, tau_c, alpha, lbd=1.):
     n = 1. - D_tau
     A = (tau_c / w) ** (n * alpha)
@@ -1611,8 +1612,22 @@ def gamma_waiting_times(
         The shape parameter of the gamma distribution.
     beta : float
         The scale parameter of the gamma distribution.
-    log : string, optional
+    normalized : boolean, optional
+        If True, assumes that the waiting times are normalized so that their
+        expected value is 1. It follows that the two parameters of the gamma law
+        are dependent and `beta = 1/gamma`. 
+        Note: `normalized=True` could just be achieved with `beta=None`.
+    log : boolean, optional
         If True, returns the base-10 logarithm of the gamma distribution.
+        Defaults to False.
+    C : string, optional
+        Either of 'theoretical' or 'truncated'.
+        - 'theoretical': Uses the theoretical normalization constant, that is,
+          the constant that ensures that the pdf integrates to 1 over its
+          theoretical support (0 to +infinity).
+        - 'truncated': Uses the normalization constant for a truncated support
+          defined by (`waiting_time.min()`, `waiting_time.max()`).
+        Defaults to 'theoretical'.
 
     Returns
     -------
@@ -1648,8 +1663,41 @@ def gamma_waiting_times(
         return C * waiting_time ** (gamma - 1.0) * np.exp(-waiting_time / beta)
 
 
-def fractal_waiting_times(w, n, tau_c, alpha, lbd=1.0, log=False):
-    """ """
+def fractal_waiting_times(w, n, tau_c, alpha, lbd=1.0, tau_min=None, log=False):
+    """
+    Parameters
+    ----------
+    w : numpy.ndarray or list
+        Earthquake waiting times.
+    n : float
+        Short waiting times exponent. The asymptotic behavior of the pdf
+        at short waiting times is entirely controlled by `n`:
+            `pdf ~ w**-(2-n)`
+        `n` is related to the "fractal dimension" `D_tau`: `n = 1 - D_tau`
+    tau_c : float
+        Cross-over time from the short waiting time behavior `pdf ~ w**-(2-n)`
+        to the long waiting time behavior `pdf ~ w**-(2+n*alpha)`
+    alpha : float
+        Long waiting times exponent. The asymptotic behavior of the pdf
+        at long waiting times is controlled both by `n` and `alpha`:
+            `pdf ~ w**-(2+n*alpha)`
+    lbd : float, optional
+        Average rate of seismicity, that is, the inverse of the expected waiting
+        time. Default to 1 (i.e., assumes that waiting times are normalized).
+    tau_min : float or None, optional
+        If not None (default), the support of the pdf is defined between `tau_min` and
+        infinity. Note that this model usually requires `tau_min > 0` in order
+        to satisfies the definition of a pdf.
+    log : boolean, optional
+        If True, returns the logarithm of pdf. Defaults to False.
+
+    Returns
+    -------
+    pdf : numpy.ndarray
+        Probability density function of waiting times. If `log=True`, it
+        returns the logarithm (base 10) of the pdf.
+    """
+    w = np.asarray(w)
     omega = (tau_c / w) ** (n * alpha)
     pdf = (
         (n / (lbd * w**2) )
@@ -1657,6 +1705,9 @@ def fractal_waiting_times(w, n, tau_c, alpha, lbd=1.0, log=False):
         * (1.0 / (1.0 + omega) ** (1.0 / alpha + 2.0))
         * (1.0 + n * alpha + (1.0 - n) * omega)
     )
+    if tau_min is not None:
+        # define the lower bound of the pdf's support
+        pdf[w < tau_min] = 0.
     if log:
         return np.log10(pdf)
     else:
