@@ -796,7 +796,7 @@ def fit_occupation_probability(
         if loss == "relative_entropy":
             # define model
             fractal_occupation = partial(
-                occupation_probability_unconstrained_fractal_model, log=False
+                occupation_probability_fractal_model, log=False
             )
             loss = lambda params: scipy.stats.entropy(
                 Phi[selection],
@@ -818,7 +818,7 @@ def fit_occupation_probability(
         elif loss == "l2_log":
             # define model
             fractal_occupation_log = partial(
-                occupation_probability_unconstrained_fractal_model, log=True
+                occupation_probability_fractal_model, log=True
             )
             bounds = (
                 (param_bounds["n_min"], min(tau), param_bounds["alpha_min"]),
@@ -844,17 +844,11 @@ def fit_occupation_probability(
         ## cumulative distribution function is 0 for the min waiting time
         # p0 = [1.0 - D_random, sharpness]
         # bounds = ((0., 0.5), (1.0, 4.0))
-        ## define model
-        # fractal_occupation_log = partial(
-        #        occupation_probability_constrained_fractal_model,
-        #        normalized_tau_min=tau_min,
-        #        log=True
-        #        )
 
         squared_res = np.mean(
             (
                 log_Phi[selection]
-                - occupation_probability_unconstrained_fractal_model(
+                - occupation_probability_fractal_model(
                     tau[selection], *popt, log=True
                 )
             )
@@ -1104,11 +1098,6 @@ def _dlogPhi_dlogtau(tau, gamma):
     ) * np.exp(-gtau)
     return loglog_slope
 
-
-def occupation_probability_unconstrained_fractal_model(tau, n, tau_c, alpha, log=False):
-    return occupation_probability_fractal_model(tau, n, tau_c, alpha, log=log)
-
-
 def occupation_probability_fractal_model(tau, n, tau_c, alpha, log=False):
     """
     Compute the occupation probability of a fractal model for given interval sizes `tau`.
@@ -1140,44 +1129,6 @@ def occupation_probability_fractal_model(tau, n, tau_c, alpha, log=False):
     p(tau) = (1 + (tau_c / tau)^(n * alpha))^(-1 / alpha)  if log = False
     p(tau) = -1 / alpha * log10(1 + (tau_c / tau)^(n * alpha)) if log = True
     """
-    if log:
-        return -1.0 / alpha * np.log10(1.0 + (tau_c / tau) ** (n * alpha))
-    else:
-        return np.power(1.0 / (1.0 + (tau_c / tau) ** (n * alpha)), 1.0 / alpha)
-
-
-def occupation_probability_constrained_fractal_model(
-    tau, n, alpha, normalized_tau_min=0.01, log=False
-):
-    """
-    Compute the occupation probability of a fractal model for given interval sizes `tau`.
-
-    Parameters
-    ----------
-    tau : array_like
-        Array of time interval sizes.
-    n : float
-        Fractal dimensionality parameter.
-    alpha : float
-        Scaling exponent which controls the sharpness of the cutoff.
-    log : bool, optional
-        Whether to return the logarithm of the occupation probability.
-        Default is False.
-
-    Returns
-    -------
-    array_like
-        Occupation probability values corresponding to each interval size value.
-
-    Notes
-    -----
-    The occupation probability of a fractal model as a function of
-    interval size is given by:
-
-    p(tau) = (1 + (tau_c / tau)^(n * alpha))^(-1 / alpha)  if log = False
-    log p(tau) = -1 / alpha * log10(1 + (tau_c / tau)^(n * alpha)) if log = True
-    """
-    tau_c = theoretical_tau_c(n, normalized_tau_min)
     if log:
         return -1.0 / alpha * np.log10(1.0 + (tau_c / tau) ** (n * alpha))
     else:
