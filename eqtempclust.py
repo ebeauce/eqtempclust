@@ -965,6 +965,7 @@ def fit_occupation_probability(
 # ===============================================================
 #               UTILITY FUNCTIONS
 # ===============================================================
+
 def linear_spline(b1, log_tau_c, log_tau):
     """Linear spline model of occupation probability."""
     spline1 = log_tau <= log_tau_c
@@ -1441,15 +1442,14 @@ def occupation_probability_fractal_model(tau, n, tau_c, alpha, log=False):
     else:
         return np.power(1.0 / (1.0 + (tau_c / tau) ** (n * alpha)), 1.0 / alpha)
 
-def cdf_fractal(w, D_tau, tau_c, alpha, lbd=1.):
-    n = 1. - D_tau
+def cdf_fractal(w, n, tau_c, alpha, lbd=1.):
     A = (tau_c / w) ** (n * alpha)
     return 1. - n / lbd * w**(-1) * A * (1 + A)**(-1/alpha - 1)
 
-def tau_min_fractal(D_tau, tau_c, alpha, lbd=1.):
-    fun = partial(cdf_fractal, D_tau=D_tau, tau_c=tau_c, alpha=alpha, lbd=lbd)
+def tau_min_fractal(n, tau_c, alpha, lbd=1.):
+    fun = partial(cdf_fractal, n=n, tau_c=tau_c, alpha=alpha, lbd=lbd)
     fprime = partial(
-            fractal_waiting_times, n=1.-D_tau, tau_c=tau_c, alpha=alpha, lbd=lbd
+            fractal_waiting_times, n=n, tau_c=tau_c, alpha=alpha, lbd=lbd
             )
     p0 = float(tau_c)
     while fun(p0 / 10.) > 0.:
