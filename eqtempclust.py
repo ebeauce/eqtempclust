@@ -1,11 +1,13 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
 import scipy.special as scispec
+import scipy.optimize
+
 from scipy.optimize import curve_fit
 from scipy.special import gammainc, gammaincc
 from scipy.stats import linregress
-import scipy.optimize
 from functools import partial
 
 
@@ -112,9 +114,12 @@ def compute_occupation_probability(
     -------
     Phi : numpy.ndarray
         Observed occupation probability at the time bin sizes defined by `tau`.
-    Phi_poisson : numpy.ndarray
-        Occupation probability for a synthetic random earthquake sequence with
-        same average earthquake rate at the time bin sizes defined by `tau`.
+    Phi_lower : numpy.ndarray
+        Lower bound of the `(100 - interval_uncertainty_pct)`% confidence
+        interval on `Phi`.
+    Phi_upper : numpy.ndarray
+        Upper bound of the `(100 - interval_uncertainty_pct)`% confidence
+        interval on `Phi`.
     tau : numpy.ndarray
         Time bin sizes at which the occupation probability is computed. These
         times are normalized if `return_normalized_times=True`, that is, given
@@ -1109,7 +1114,13 @@ def _dlogPhi_dlogtau(tau, gamma):
 
 
 def interevent_pdf(
-    ie_times, nbins=10, bins=None, min_events_per_bin=0, return_midbins=True
+    ie_times,
+    nbins=10,
+    bins=None,
+    min_events_per_bin=0,
+    return_midbins=True,
+    num_resamplings=50,
+    interval_uncertainty_pct=5.0,
 ):
     """
     Compute the interevent time probability density function (PDF).
@@ -1128,11 +1139,26 @@ def interevent_pdf(
         Whether to return the midpoints of the bins as the second output.
         If False, returns the bin edges instead.
         Default is True.
+    num_resamplings : int, optional
+        Number of bootstrap replica used to estimate the uncertainty on
+            `ie_pdf(w)`
+        Defaults to 50.
+    interval_uncertainty_pct : float, optional
+        The returned arrays, `ie_pdf_lower` and `ie_pdf_upper`, are the lower
+        and upper `interval_uncertainty_pct/2` percentile of `ie_pdf` from
+        bootstrapping. Thus, they represent the (100 -
+        interval_uncertainty_pct)% confidence interval.
 
     Returns
     -------
     ie_pdf : ndarray
         The interevent time probability density function (PDF).
+    ie_pdf_lower : numpy.ndarray
+        Lower bound of the `(100 - interval_uncertainty_pct)`% confidence
+        interval on `ie_pdf`.
+    ie_pdf_upper : numpy.ndarray
+        Upper bound of the `(100 - interval_uncertainty_pct)`% confidence
+        interval on `ie_pdf`.
     ie_bins : ndarray
         The bin midpoints or edges used to compute the PDF, depending on the
         `return_midbins` parameter.
@@ -1146,7 +1172,7 @@ def interevent_pdf(
     Examples
     --------
     >>> ie_times = np.random.normal(loc=10, scale=2, size=1000)
-    >>> ie_pdf, ie_bins = interevent_pdf(ie_times, nbins=20)
+    >>> ie_pdf, ie_pdf_lower, ie_pdf_upper, ie_bins = interevent_pdf(ie_times, nbins=20)
     """
     if bins is None:
         ie_time_bins = np.logspace(
@@ -1154,6 +1180,9 @@ def interevent_pdf(
         )
     else:
         ie_time_bins = bins
+    num_events = len(ie_times)
+    # ---------------------------------------
+    # estimate pdf on the whole data set
     ie_times_count, _ = np.histogram(ie_times, bins=ie_time_bins)
     # if not enough events in a bin, don't trust the statistic
     non_trusted_bins = ie_times_count < min_events_per_bin
@@ -1162,10 +1191,34 @@ def interevent_pdf(
     ie_times_count[ie_times_count < min_events_per_bin] = 0
     bin_sizes = ie_time_bins[1:] - ie_time_bins[:-1]
     ie_pdf = ie_times_count / (bin_sizes * ie_times_count.sum())
+    # ---------------------------------------
+    # estimate pdf uncertainties with bootstrapping
+    rng = np.random.default_rng()
+    ie_pdf_b = np.zeros((num_resamplings, len(ie_pdf)), dtype=np.float64)
+    for i in range(num_resamplings):
+        ie_times_b = rng.choice(ie_times, size=num_events, replace=True)
+        ie_times_count_b, _ = np.histogram(ie_times_b, bins=ie_time_bins)
+        # if not enough events in a bin, don't trust the statistic
+        non_trusted_bins = ie_times_count_b < min_events_per_bin
+        ie_times_count_b[ie_times_count_b < min_events_per_bin] = 0
+        ie_pdf_b[i, :] = ie_times_count_b / (bin_sizes * ie_times_count_b.sum())
+    ie_pdf_lower = np.zeros(len(ie_pdf), dtype=np.float64)
+    ie_pdf_upper = np.zeros(len(ie_pdf), dtype=np.float64)
+    for j in range(len(ie_pdf)):
+        valid = ie_pdf_b[:, j] > 0.
+        if np.sum(valid) == 0:
+            ie_pdf_lower[j], ie_pdf_upper[j] = 0., 0.
+            continue
+        ie_pdf_lower[j] = np.percentile(
+                ie_pdf_b[valid, j], interval_uncertainty_pct / 2.0,
+                )
+        ie_pdf_upper[j] = np.percentile(
+            ie_pdf_b[valid, j], 100.0 - interval_uncertainty_pct / 2.0,
+        )
+
     if return_midbins:
-        return ie_pdf, (ie_time_bins[1:] + ie_time_bins[:-1]) / 2.0
-    else:
-        return ie_pdf, ie_time_bins
+        ie_time_bins = (ie_time_bins[1:] + ie_time_bins[:-1]) / 2.0
+    return ie_pdf, ie_pdf_lower, ie_pdf_upper, ie_time_bins
 
 
 def fit_interevent_pdf(
@@ -1391,9 +1444,14 @@ def occupation_Poissonian_uncertainty(
     return possible_fractions, uncertainty
 
 
-def aic_(x, model, num_params):
+def compute_aic(x, model, num_params):
     """Akaike Information Criterion."""
-    return -2.0 * np.log(model(x)) + 2.0 * num_params
+    likelihood = model(x)
+    argmax = likelihood.argmax()
+    if np.isinf(likelihood[argmax]):
+        print(f"Inf detected!!: waiting time was: {x[argmax]:.2e}")
+    log_likelihood = np.log(likelihood[likelihood != 0.0])
+    return -2.0 * np.sum(log_likelihood) + 2.0 * num_params
 
 
 # ===============================================================
@@ -1522,12 +1580,10 @@ def theoretical_norm_fractal(n, lbd=1.0):
 
 
 def truncated_norm_fractal(n, tau_c, alpha, tau_min, tau_max, lbd=1.0):
-    integral_over_finite_support = (
-            cdf_fractal(tau_max, n, tau_c, alpha, lbd=lbd)
-            -
-            cdf_fractal(tau_min, n, tau_c, alpha, lbd=lbd)
-            )
-    return 1. / integral_over_finite_support
+    integral_over_finite_support = cdf_fractal(
+        tau_max, n, tau_c, alpha, lbd=lbd
+    ) - cdf_fractal(tau_min, n, tau_c, alpha, lbd=lbd)
+    return 1.0 / integral_over_finite_support
 
 
 def estimate_sample_rate_vs_real_rate(wt_bins, pdf, n, theta_c, alpha):
@@ -1566,10 +1622,10 @@ def estimate_sample_rate_vs_real_rate(wt_bins, pdf, n, theta_c, alpha):
         wt_bins.min(),
         wt_bins.max(),
     )
-    #theo_norm = theoretical_norm_fractal(
+    # theo_norm = theoretical_norm_fractal(
     #    n,
-    #)
-    #correction = theo_norm / trunc_norm
+    # )
+    # correction = theo_norm / trunc_norm
     # if the ratio `lbd_hat / lbd` were to be 1, then `pdf * correction`
     # should match the model
     # integrate the pdf over its finite support
@@ -1578,15 +1634,15 @@ def estimate_sample_rate_vs_real_rate(wt_bins, pdf, n, theta_c, alpha):
     wt_bins = wt_bins[indexes]
     pdf = pdf[indexes]
     bin_width = wt_bins[1:] - wt_bins[:-1]
-    pdf_midbin = (pdf[1:] + pdf[:-1]) / 2.
+    pdf_midbin = (pdf[1:] + pdf[:-1]) / 2.0
     integral = np.sum(pdf_midbin * bin_width)
     # 1/integral should be equal to trunc_norm
     hat_rate_vs_real_rate = integral * trunc_norm
     return hat_rate_vs_real_rate
 
 
-
 # -------------------------- gamma
+
 
 def occupation_probability_unconstrained_gamma_model(tau, gamma, beta, lamb, log=False):
     Phi_tau = (lamb * tau) / (beta * gamma) * scispec.gammaincc(
@@ -1963,10 +2019,12 @@ def run_occupation_analysis1(
     # compute inter-event time pdf
     waiting_times = timings[1:] - timings[:-1]
     wt_bins = np.logspace(np.log10(tau.min()), np.log10(tau.max()), nbins_wt)
-    wt_pdf, wt_bins = interevent_pdf(
+    wt_pdf, wt_pdf_lower, wt_pdf_upper, wt_bins = interevent_pdf(
         waiting_times / waiting_times.mean(), return_midbins=True, bins=wt_bins
     )
     output["wt_pdf"] = wt_pdf
+    output["wt_pdf_lower"] = wt_pdf_lower
+    output["wt_pdf_upper"] = wt_pdf_upper
     output["wt_bins"] = wt_bins
     output["wt_mean"] = waiting_times.mean()
 
@@ -2012,14 +2070,6 @@ def run_occupation_analysis1(
         return_figure=False,
         loss=loss_phi,
     )
-    # output["n"], output["tau_c"], output["alpha"], output["n_err"], output["tau_c_err"], output["alpha_err"] = fit_interevent_pdf(
-    #     wt_bins,
-    #     wt_pdf,
-    #     tau_max_fit=normalized_tau_max,
-    #     tau_min_fit=normalized_tau_min,
-    #     model="fractal",
-    #     fix_beta=fix_beta
-    # )
 
     output["n"] = fractal_model_parameters["n"]
     output["n_err"] = fractal_model_parameters["n_err"]
@@ -2033,6 +2083,36 @@ def run_occupation_analysis1(
     output["D_tau_err"] = output["n_err"]
     output["rms"] = fractal_model_parameters["rms"]
     output["var_reduction"] = fractal_model_parameters["var_reduction"]
+
+    # compute the Akaike Information Criterion for each model
+    wt_norm = waiting_times / waiting_times.mean()
+    # discard waiting times below the smallest bin used here
+    # because likelihood is extremely sensitive to noise at
+    # very short waiting times
+    wt_min = wt_bins[wt_pdf > 0].min()
+    wt_norm = wt_norm[wt_norm > wt_min]
+    # --------- gamma aic
+    model = partial(
+        gamma_waiting_times,
+        gamma=output["gamma"],
+        beta=output["beta"],
+        normalized=True,
+        C="theoretical",
+    )
+    num_params = 1 if fix_beta else 2
+    output["aic_gamma"] = compute_aic(wt_norm, model, num_params=num_params)
+    # --------- fractal aic
+    model = partial(
+        fractal_waiting_times,
+        n=output["n"],
+        tau_c=output["tau_c"],
+        alpha=output["alpha"],
+        lbd=1.0,
+        tau_min=output["tau_min"],
+    )
+    num_params = 3
+    output["aic_fractal"] = compute_aic(wt_norm, model, num_params=num_params)
+
     return output
 
 
@@ -2103,10 +2183,12 @@ def run_occupation_analysis2(
     # compute inter-event time pdf
     waiting_times = timings[1:] - timings[:-1]
     wt_bins = np.logspace(np.log10(tau.min()), np.log10(tau.max()), nbins_wt)
-    wt_pdf, wt_bins = interevent_pdf(
+    wt_pdf, wt_pdf_lower, wt_pdf_upper, wt_bins = interevent_pdf(
         waiting_times / waiting_times.mean(), return_midbins=True, bins=wt_bins
     )
     output["wt_pdf"] = wt_pdf
+    output["wt_pdf_lower"] = wt_pdf_lower
+    output["wt_pdf_upper"] = wt_pdf_upper
     output["wt_bins"] = wt_bins
     output["wt_mean"] = waiting_times.mean()
 
@@ -2157,6 +2239,218 @@ def run_occupation_analysis2(
     output["D_tau"] = 1.0 - output["n"]
     output["D_tau_err"] = output["n_err"]
     output["var_reduction"] = fractal_model_parameters["var_reduction"]
+
+    # compute the Akaike Information Criterion for each model
+    wt_norm = waiting_times / waiting_times.mean()
+    # discard waiting times below the smallest bin used here
+    # because likelihood is extremely sensitive to noise at
+    # very short waiting times
+    wt_min = wt_bins[wt_pdf > 0].min()
+    wt_norm = wt_norm[wt_norm > wt_min]
+    # --------- gamma aic
+    model = partial(
+        gamma_waiting_times,
+        gamma=output["gamma"],
+        beta=output["beta"],
+        normalized=True,
+        C="theoretical",
+    )
+    num_params = 1 if fix_beta else 2
+    output["aic_gamma"] = compute_aic(wt_norm, model, num_params=num_params)
+    # --------- fractal aic
+    model = partial(
+        fractal_waiting_times,
+        n=output["n"],
+        tau_c=output["tau_c"],
+        alpha=output["alpha"],
+        lbd=1.0,
+        tau_min=output["tau_min"],
+    )
+    num_params = 3
+    output["aic_fractal"] = compute_aic(wt_norm, model, num_params=num_params)
+
+    return output
+
+
+def run_occupation_analysis3(
+    timings,
+    normalized_tau_min,
+    normalized_tau_max,
+    min_num_events=5,
+    nbins_wt=20,
+    shortest_resolved_time=5.0,
+    loss_phi="l2_log",
+    base_log=2.0,
+    num_resamplings=50,
+):
+    """
+    Perform occupation analysis on event timings and inter-event times.
+
+    Parameters:
+    -----------
+    timings : numpy.ndarray
+        Array of event timings.
+    normalized_tau_min : float
+        Minimum normalized time bin size and inter-event time.
+    normalized_tau_max : float
+        Maximum normalized time bin size and inter-event time.
+    min_num_events : int, optional
+        Minimum number of events for analysis (default is 5).
+    nbins_wt : int, optional
+        Number of bins for the inter-event time PDF (default is 20).
+    shortest_resolved_time : float, optional
+        Minimum resolved inter-event time (default is 5.0).
+    loss_phi : str, optional
+        Loss function for occupation probability fractal model fitting (default is "l2_log").
+    base_log : float, optional
+        Base for logarithm used in bin log spacing (default is 2.0).
+    num_resamplings : int, optional
+        Number of resampling iterations (default is 50).
+
+    Returns:
+    --------
+    dict
+        A dictionary containing the results of the occupation analysis, including
+        occupation probability, inter-event time PDF, gamma model parameters, and
+        fractal model parameters.
+
+    Notes:
+    ------
+    This function computes occupation probability, inter-event time PDF, fits a
+    gamma and fractal models to occupation probability. It returns the results
+    as a dictionary.
+    """
+    output = {}
+    # compute occupation probability
+    Phi, Phi_lower, Phi_upper, tau = compute_occupation_probability(
+        timings,
+        normalized_tau_min=normalized_tau_min,
+        normalized_tau_max=normalized_tau_max,
+        base_log=base_log,
+        min_num_events=min_num_events,
+        shortest_resolved_interevent_time=shortest_resolved_time,
+        num_resamplings=num_resamplings,
+    )
+    output["Phi"] = Phi
+    output["Phi_lower"] = Phi_lower
+    output["Phi_upper"] = Phi_upper
+    output["tau"] = tau
+    # compute inter-event time pdf
+    waiting_times = timings[1:] - timings[:-1]
+    wt_bins = np.logspace(np.log10(tau.min()), np.log10(tau.max()), nbins_wt)
+    wt_pdf, wt_pdf_lower, wt_pdf_upper, wt_bins = interevent_pdf(
+        waiting_times / waiting_times.mean(), return_midbins=True, bins=wt_bins
+    )
+    output["wt_pdf"] = wt_pdf
+    output["wt_pdf_lower"] = wt_pdf_lower
+    output["wt_pdf_upper"] = wt_pdf_upper
+    output["wt_bins"] = wt_bins
+    output["wt_mean"] = waiting_times.mean()
+
+    # fit gamma model to occupation probability
+    # ------------- first, do not fix beta
+    _, _, _, _, gamma_model_parameters = occupation_analysis(
+        timings,
+        plot_above=2.0,
+        model="gamma",
+        normalized_tau_min=normalized_tau_min,
+        normalized_tau_max=normalized_tau_max,
+        base_log=base_log,
+        shortest_resolved_interevent_time=shortest_resolved_time,
+        fix_beta=False,
+        return_figure=False,
+        loss=loss_phi,
+    )
+    output["gamma"] = gamma_model_parameters["gamma"]
+    output["gamma_err"] = gamma_model_parameters["gamma_err"]
+    output["gamma_rms"] = gamma_model_parameters["rms"]
+    output["beta"] = gamma_model_parameters["beta"]
+    output["beta_err"] = gamma_model_parameters["beta_err"]
+    # ------------ then, fix beta
+    _, _, _, _, gamma_model_parameters = occupation_analysis(
+        timings,
+        plot_above=2.0,
+        model="gamma",
+        normalized_tau_min=normalized_tau_min,
+        normalized_tau_max=normalized_tau_max,
+        base_log=base_log,
+        shortest_resolved_interevent_time=shortest_resolved_time,
+        fix_beta=True,
+        return_figure=False,
+        loss=loss_phi,
+    )
+    output["gamma_fixed_beta"] = gamma_model_parameters["gamma"]
+    output["gamma_err_fixed_beta"] = gamma_model_parameters["gamma_err"]
+    output["gamma_rms_fixed_beta"] = gamma_model_parameters["rms"]
+    output["beta_fixed_beta"] = 1.0 / gamma_model_parameters["gamma"]
+    output["beta_err_fixed_beta"] = (
+        abs(1.0 / output["gamma_fixed_beta"] ** 2) * output["gamma_err_fixed_beta"]
+    )
+
+    # fit fractal model to occupation probability
+    _, _, _, _, fractal_model_parameters = occupation_analysis(
+        timings,
+        plot_above=2.0,
+        model="fractal",
+        normalized_tau_min=normalized_tau_min,
+        normalized_tau_max=normalized_tau_max,
+        base_log=base_log,
+        shortest_resolved_interevent_time=shortest_resolved_time,
+        return_figure=False,
+        loss=loss_phi,
+    )
+
+    output["n"] = fractal_model_parameters["n"]
+    output["n_err"] = fractal_model_parameters["n_err"]
+    output["tau_c"] = fractal_model_parameters["tau_c"]
+    output["tau_c_err"] = fractal_model_parameters["tau_c_err"]
+    output["alpha"] = fractal_model_parameters["alpha"]
+    output["alpha_err"] = fractal_model_parameters["alpha_err"]
+    output["fractal_rms"] = fractal_model_parameters["rms"]
+    output["tau_min"] = fractal_model_parameters["tau_min"]
+    output["D_tau"] = 1.0 - output["n"]
+    output["D_tau_err"] = output["n_err"]
+    output["var_reduction"] = fractal_model_parameters["var_reduction"]
+
+    # compute the Akaike Information Criterion for each model
+    wt_norm = waiting_times / waiting_times.mean()
+    # discard waiting times below the smallest bin used here
+    # because likelihood is extremely sensitive to noise at
+    # very short waiting times
+    wt_min = wt_bins[wt_pdf > 0].min()
+    wt_norm = wt_norm[wt_norm > wt_min]
+    # --------- gamma aic
+    model = partial(
+        gamma_waiting_times,
+        gamma=output["gamma"],
+        beta=output["beta"],
+        normalized=True,
+        C="theoretical",
+    )
+    num_params = 2
+    output["aic_gamma"] = compute_aic(wt_norm, model, num_params=num_params)
+    # --------- gamma with fixed beta aic
+    model = partial(
+        gamma_waiting_times,
+        gamma=output["gamma_fixed_beta"],
+        beta=output["beta_fixed_beta"],
+        normalized=True,
+        C="theoretical",
+    )
+    num_params = 1
+    output["aic_gamma_fixed_beta"] = compute_aic(wt_norm, model, num_params=num_params)
+    # --------- fractal aic
+    model = partial(
+        fractal_waiting_times,
+        n=output["n"],
+        tau_c=output["tau_c"],
+        alpha=output["alpha"],
+        lbd=1.0,
+        tau_min=output["tau_min"],
+    )
+    num_params = 3
+    output["aic_fractal"] = compute_aic(wt_norm, model, num_params=num_params)
+
     return output
 
 
@@ -2165,13 +2459,15 @@ def plot_gamma_vs_fractal(
     num_points_fit=50,
     figname="occurrence_statistics",
     figtitle="",
-    **kwargs
+    **kwargs,
 ):
     """ """
     import string
 
     # unpack arguments
     wt_pdf = occupation_parameters["wt_pdf"]
+    wt_pdf_lower = occupation_parameters["wt_pdf_lower"]
+    wt_pdf_upper = occupation_parameters["wt_pdf_upper"]
     wt_bins = occupation_parameters["wt_bins"]
     tau = occupation_parameters["tau"]
     Phi = occupation_parameters["Phi"]
@@ -2212,6 +2508,8 @@ def plot_gamma_vs_fractal(
         color="C0",
         label="Observed distribution",
     )
+    axes[1].fill_between(wt_bins[valid_bins], wt_pdf_lower[valid_bins],
+            wt_pdf_upper[valid_bins], alpha=0.25, color="C0")
     axes[1].set_ylabel(r"Inter-event time pdf, $\rho_{\lambda W}$")
     axes[1].set_xlabel(r"Normalized inter-event time, $\lambda w$")
 
@@ -2252,12 +2550,12 @@ def plot_gamma_vs_fractal(
     # estimate the error made when estimating the rate of seismicity
     # with the sample mean
     hat_rate_vs_real_rate = estimate_sample_rate_vs_real_rate(
-            occupation_parameters["wt_bins"],
-            occupation_parameters["wt_pdf"],
-            occupation_parameters["n"],
-            occupation_parameters["tau_c"],
-            occupation_parameters["alpha"]
-            )
+        occupation_parameters["wt_bins"],
+        occupation_parameters["wt_pdf"],
+        occupation_parameters["n"],
+        occupation_parameters["tau_c"],
+        occupation_parameters["alpha"],
+    )
     # use it to refine theo_norm
     theo_norm *= hat_rate_vs_real_rate
     occupation_parameters["hat_rate_vs_real_rate"] = hat_rate_vs_real_rate
@@ -2287,7 +2585,7 @@ def plot_gamma_vs_fractal(
     )
     # an offset (in log scale) is visible between the data and the model when
     # the rate of seismicity is not well approximated by the inverse of the
-    # waiting time sample mean 
+    # waiting time sample mean
     axes[0].plot(
         tau_fit, occupation_fractal_model, ls="--", color="magenta", label=label
     )
