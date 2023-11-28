@@ -2027,6 +2027,7 @@ def run_occupation_analysis1(
     output["wt_pdf_upper"] = wt_pdf_upper
     output["wt_bins"] = wt_bins
     output["wt_mean"] = waiting_times.mean()
+    output["wt_cov"] = np.std(waiting_times) / output["wt_mean"]
 
     # fit gamma model to inter-event time pdf
     if fix_beta:
@@ -2191,6 +2192,7 @@ def run_occupation_analysis2(
     output["wt_pdf_upper"] = wt_pdf_upper
     output["wt_bins"] = wt_bins
     output["wt_mean"] = waiting_times.mean()
+    output["wt_cov"] = np.std(waiting_times) / output["wt_mean"]
 
     # fit gamma model to occupation probability
     _, _, _, _, gamma_model_parameters = occupation_analysis(
@@ -2346,6 +2348,7 @@ def run_occupation_analysis3(
     output["wt_pdf_upper"] = wt_pdf_upper
     output["wt_bins"] = wt_bins
     output["wt_mean"] = waiting_times.mean()
+    output["wt_cov"] = np.std(waiting_times) / output["wt_mean"]
 
     # fit gamma model to occupation probability
     # ------------- first, do not fix beta
