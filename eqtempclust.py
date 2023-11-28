@@ -70,7 +70,7 @@ def compute_occupation_probability(
         Earthquake timings, in arbitrary units (but, in general, seconds).
     normalized_tau_min : float, optional
         Smallest bin size in units of average inter-event time.
-        Default is 0.01.
+normalized_tau_max        Default is 0.01.
     normalized_tau_max : float, optional
         Largest bin size in units of average inter-event time.
         Default is None. If `None`, `normalized_tau_max = max_waiting_time / avg_waiting_time`.
@@ -285,8 +285,6 @@ def occupation_analysis(
     normalized_tau_min=0.01,
     normalized_tau_max=None,
     normalized_tau_max_fit=None,
-    num_windows=1,
-    window_mode="natural_time",
     base_log=2.0,
     return_normalized_times=True,
     window_duration=None,
@@ -300,7 +298,7 @@ def occupation_analysis(
     plot_above=1.0,
     interval_uncertainty_pct=5.0,
     num_resamplings=10,
-    # leaveout_pct=5.0,
+    pre_computed_Phi=None,
     **kwargs,
 ):
     """Compute the fractal dimension.
@@ -317,16 +315,6 @@ def occupation_analysis(
         Default is None. If `None`, `normalized_tau_max = max_waiting_time / avg_waiting_time`.
     normalized_tau_max_fit : float, optional
         If not None (default), is the maximum bin size used for fitting the model.
-    num_windows : integer, optional
-        If greater than 1 (default), the time period is divided into `num_windows`
-        windows and the occupation probability is computed and averaged over
-        each of them. See `window_mode` for details on how the windows are defined.
-    window_mode : string, optional
-        Used if `num_windows > 1`. Either 'natural_time' or 'physical_time'.
-        - 'natural_time': windows are defined such that they contain the same
-        number of events.
-        - 'physical_time': windows are defined such that they span the same
-        amount of time.
     base_log : float, optional
         The time bin sizes are log-spaced using the log-`base_log` basis.
         Default is 2.
@@ -372,149 +360,16 @@ def occupation_analysis(
     occupation_parameters : dictionary
         Dictionary with model parameters fitted to the occupation probability.
     """
-    if num_windows > 1:
-        if window_mode == "natural_time":
-            n_events_per_window = len(eq_timings) // num_windows
-            while n_events_per_window <= kwargs.get("min_num_events_per_window", 5):
-                num_windows -= 1
-                n_events_per_window = len(eq_timings) // num_windows
-            print(f"Events per window: {n_events_per_window:d}")
-            if len(eq_timings) % num_windows < 0.25 * n_events_per_window:
-                num_windows -= 1
-            num_valid_windows = num_windows
-            # initialize multi-window variables
-            mw_Phi, mw_Phi_lower, mw_Phi_upper, mw_tau = [], [], [], []
-            idx0 = 0
-            idx1 = n_events_per_window - 1
-            earthquake_rate = np.zeros(num_windows, dtype=np.float32)
-            avg_waiting_time = np.zeros(num_windows, dtype=np.float32)
-            for i in range(num_windows):
-                window_duration = eq_timings[idx1] - eq_timings[idx0]
-                earthquake_rate[i] = len(eq_timings[idx0:idx1]) / window_duration
-                avg_waiting_time[i] = 1.0 / earthquake_rate[i]
-                window_normalized_tau_max = window_duration / avg_waiting_time[i]
-                (
-                    mw_Phi_i,
-                    mw_Phi_lower_i,
-                    mw_Phi_upper_i,
-                    multiwindow_tau_i,
-                ) = compute_occupation_probability(
-                    eq_timings[idx0:idx1],
-                    normalized_tau_min=normalized_tau_min,
-                    normalized_tau_max=window_normalized_tau_max,
-                    # normalized_tau_max=None,
-                    base_log=base_log,
-                    return_normalized_times=True,
-                    # window_duration=window_duration,
-                    shortest_resolved_interevent_time=shortest_resolved_interevent_time,
-                    num_resamplings=num_resamplings,
-                    interval_uncertainty_pct=interval_uncertainty_pct,
-                )
-                mw_Phi.append(mw_Phi_i)
-                mw_Phi_lower.append(mw_Phi_lower_i)
-                mw_Phi_upper.append(mw_Phi_upper_i)
-                mw_tau.append(mw_tau_i)
-                idx0 += n_events_per_window
-                idx1 += n_events_per_window
-        elif window_mode == "physical_time":
-            # first, compute the number of events inside each window
-            # to get the rate of event occurrence
-            ecn, time_bins = np.histogram(
-                eq_timings,
-                bins=np.linspace(eq_timings.min(), eq_timings.max(), num_windows + 1),
-            )
-            window_duration = time_bins[1] - time_bins[0]
-            valid_windows = ecn > kwargs.get("min_num_events_per_window", 5)
-            window_start_time = time_bins[:-1][valid_windows]
-            earthquake_rate = ecn[valid_windows] / window_duration
-            avg_waiting_time = 1.0 / earthquake_rate
-            # initialize multi-window variables
-            mw_Phi, mw_Phi_lower, mw_Phi_upper, mw_tau = [], [], [], []
-            num_valid_windows = np.sum(valid_windows)
-            for i in range(num_valid_windows):
-                window_normalized_tau_max = window_duration / avg_waiting_time[i]
-                subset_eq_timings = eq_timings[
-                    (
-                        (eq_timings >= window_start_time[i])
-                        & (eq_timings < window_start_time[i] + window_duration)
-                    )
-                ]
-                (
-                    mw_Phi_i,
-                    mw_Phi_lower_i,
-                    mw_Phi_upper_i,
-                    multiwindow_tau_i,
-                ) = compute_occupation_probability(
-                    subset_eq_timings,
-                    normalized_tau_min=normalized_tau_min,
-                    normalized_tau_max=window_normalized_tau_max,
-                    # normalized_tau_max=None,
-                    base_log=base_log,
-                    return_normalized_times=True,
-                    # window_duration=window_duration,
-                    shortest_resolved_interevent_time=shortest_resolved_interevent_time,
-                    num_resamplings=num_resamplings,
-                    # leaveout_pct=leaveout_pct,
-                    interval_uncertainty_pct=interval_uncertainty_pct,
-                )
-                mw_Phi.append(mw_Phi_i)
-                mw_Phi_lower.append(mw_Phi_lower_i)
-                mw_Phi_upper.append(mw_Phi_upper_i)
-                mw_tau.append(mw_tau_i)
-        # here, we need to fix normalized_tau_max
-        # the below definition will cause problems when the maximum
-        # average waiting time is infinite or just very large
-        # normalized_tau_max = window_duration / avg_waiting_time.max()
-        if normalized_tau_max is None:
-            normalized_time_range = np.min([tau_.max() for tau_ in multiwindow_tau])
-            normalized_tau_max = normalized_time_range
-        else:
-            normalized_time_range = normalized_tau_max
-        # use normalized_tau_max for time_range and normalized_tau_max
-        normalized_tau, _ = build_time_intervals(
-            normalized_time_range,
-            normalized_tau_min,
-            normalized_tau_max,
-            base_log=base_log,
-        )
-        # resample so that the tau's of all windows are the same
-        new_shape = (num_valid_windows, len(normalized_tau))
-        resampled_Phi = np.zeros(new_shape, dtype=np.float32)
-        resampled_Phi_upper = np.zeros(new_shape, dtype=np.float32)
-        resampled_Phi_lower = np.zeros(new_shape, dtype=np.float32)
-        increasing_order = np.argsort(normalized_tau)
-        for i in range(num_valid_windows):
-            resampled_Phi[i, :] = np.exp(
-                np.interp(
-                    np.log(normalized_tau[increasing_order]),
-                    np.log(mw_tau[i][increasing_order]),
-                    np.log(mw_Phi[i][increasing_order]),
-                )
-            )
-            resampled_Phi_lower[i, :] = np.exp(
-                np.interp(
-                    np.log(normalized_tau[increasing_order]),
-                    np.log(mw_tau[i][increasing_order]),
-                    np.log(mw_Phi_lower[i][increasing_order]),
-                )
-            )
-            resampled_Phi_upper[i, :] = np.exp(
-                np.interp(
-                    np.log(normalized_tau[increasing_order]),
-                    np.log(mw_tau[i][increasing_order]),
-                    np.log(mw_Phi_upper[i][increasing_order]),
-                )
-            )
-        # stack them using the event rate as a weight
-        weights = earthquake_rate / earthquake_rate.sum()
-        Phi = np.sum(weights[:, None] * resampled_Phi, axis=0)
-        Phi_lower = np.sum(weights[:, None] * resampled_Phi_lower, axis=0)
-        Phi_upper = np.sum(weights[:, None] * resampled_Phi_upper, axis=0)
+    if window_duration is None:
+        window_duration = eq_timings.max() - eq_timings.min()
+    earthquake_rate = len(eq_timings) / window_duration
+    avg_waiting_time = 1.0 / earthquake_rate
+    if pre_computed_Phi is not None:
+        Phi = pre_computed_Phi["Phi"]
+        Phi_lower = pre_computed_Phi["Phi_lower"]
+        Phi_upper = pre_computed_Phi["Phi_upper"]
+        normalized_tau = pre_computed_Phi["tau"]
     else:
-        if window_duration is None:
-            window_duration = eq_timings.max() - eq_timings.min()
-        earthquake_rate = len(eq_timings) / window_duration
-        avg_waiting_time = 1.0 / earthquake_rate
         Phi, Phi_lower, Phi_upper, normalized_tau = compute_occupation_probability(
             eq_timings,
             normalized_tau_min=normalized_tau_min,
@@ -526,7 +381,7 @@ def occupation_analysis(
             num_resamplings=num_resamplings,
             interval_uncertainty_pct=interval_uncertainty_pct,
         )
-        Phi_std = np.zeros_like(Phi)
+    #Phi_std = np.zeros_like(Phi)
     # use the expected average recurrence time
     # of the Poisson point process with same average rate
     # this is where the slope of a random time series breaks
@@ -1205,15 +1060,17 @@ def interevent_pdf(
     ie_pdf_lower = np.zeros(len(ie_pdf), dtype=np.float64)
     ie_pdf_upper = np.zeros(len(ie_pdf), dtype=np.float64)
     for j in range(len(ie_pdf)):
-        valid = ie_pdf_b[:, j] > 0.
+        valid = ie_pdf_b[:, j] > 0.0
         if np.sum(valid) == 0:
-            ie_pdf_lower[j], ie_pdf_upper[j] = 0., 0.
+            ie_pdf_lower[j], ie_pdf_upper[j] = 0.0, 0.0
             continue
         ie_pdf_lower[j] = np.percentile(
-                ie_pdf_b[valid, j], interval_uncertainty_pct / 2.0,
-                )
+            ie_pdf_b[valid, j],
+            interval_uncertainty_pct / 2.0,
+        )
         ie_pdf_upper[j] = np.percentile(
-            ie_pdf_b[valid, j], 100.0 - interval_uncertainty_pct / 2.0,
+            ie_pdf_b[valid, j],
+            100.0 - interval_uncertainty_pct / 2.0,
         )
 
     if return_midbins:
@@ -2070,6 +1927,7 @@ def run_occupation_analysis1(
         shortest_resolved_interevent_time=shortest_resolved_time,
         return_figure=False,
         loss=loss_phi,
+        pre_computed_Phi=output
     )
 
     output["n"] = fractal_model_parameters["n"]
@@ -2206,6 +2064,7 @@ def run_occupation_analysis2(
         fix_beta=fix_beta,
         return_figure=False,
         loss=loss_phi,
+        pre_computed_Phi=output
     )
     output["gamma"] = gamma_model_parameters["gamma"]
     output["gamma_err"] = gamma_model_parameters["gamma_err"]
@@ -2228,6 +2087,7 @@ def run_occupation_analysis2(
         shortest_resolved_interevent_time=shortest_resolved_time,
         return_figure=False,
         loss=loss_phi,
+        pre_computed_Phi=output
     )
 
     output["n"] = fractal_model_parameters["n"]
@@ -2363,6 +2223,7 @@ def run_occupation_analysis3(
         fix_beta=False,
         return_figure=False,
         loss=loss_phi,
+        pre_computed_Phi=output
     )
     output["gamma"] = gamma_model_parameters["gamma"]
     output["gamma_err"] = gamma_model_parameters["gamma_err"]
@@ -2381,6 +2242,7 @@ def run_occupation_analysis3(
         fix_beta=True,
         return_figure=False,
         loss=loss_phi,
+        pre_computed_Phi=output
     )
     output["gamma_fixed_beta"] = gamma_model_parameters["gamma"]
     output["gamma_err_fixed_beta"] = gamma_model_parameters["gamma_err"]
@@ -2502,7 +2364,8 @@ def plot_gamma_vs_fractal(
     fig, axes = plt.subplots(num=figname, ncols=2, figsize=(16, 7))
     fig.suptitle(figtitle)
 
-    axes[1].set_title(r"Inter-event time pdf, $\rho_{\lambda W}$")
+    # axes[1].set_title(r"Inter-event time pdf, $\rho_{\lambda W}$")
+    axes[1].set_title(r"Inter-event time pdf, $\rho_{\Theta}$")
     axes[1].plot(
         wt_bins[valid_bins],
         wt_pdf[valid_bins],
@@ -2511,15 +2374,26 @@ def plot_gamma_vs_fractal(
         color="C0",
         label="Observed distribution",
     )
-    axes[1].fill_between(wt_bins[valid_bins], wt_pdf_lower[valid_bins],
-            wt_pdf_upper[valid_bins], alpha=0.25, color="C0")
-    axes[1].set_ylabel(r"Inter-event time pdf, $\rho_{\lambda W}$")
-    axes[1].set_xlabel(r"Normalized inter-event time, $\lambda w$")
+    axes[1].fill_between(
+        wt_bins[valid_bins],
+        wt_pdf_lower[valid_bins],
+        wt_pdf_upper[valid_bins],
+        alpha=0.25,
+        color="C0",
+    )
+    # axes[1].set_ylabel(r"Inter-event time pdf, $\rho_{\lambda W}$")
+    # axes[1].set_xlabel(r"Normalized inter-event time, $\lambda w$")
+    axes[1].set_ylabel(r"Inter-event time pdf, $\rho_{\Theta}$")
+    axes[1].set_xlabel(r"Normalized inter-event time, $\theta$")
 
-    axes[0].set_title(r"Occupation probability, $\Phi(\lambda \tau)$")
+    # axes[0].set_title(r"Occupation probability, $\Phi(\lambda \tau)$")
+    axes[0].set_title(r"Occupation probability, $\Phi(\theta)$")
     axes[0].plot(tau, Phi, marker="o", ls="", color="C0", label="Observed occupation")
-    axes[0].set_ylabel(r"Occupation probability, $\Phi(\lambda \tau)$")
-    axes[0].set_xlabel(r"Normalized time interval length, $\lambda \tau$")
+    # axes[0].set_ylabel(r"Occupation probability, $\Phi(\lambda \tau)$")
+    # axes[0].set_xlabel(r"Normalized time interval length, $\lambda \tau$")
+    axes[0].set_ylabel(r"Occupation probability, $\Phi(\theta)$")
+    axes[0].set_xlabel(r"Normalized time interval length, $\theta$")
+
     axes[0].fill_between(tau, Phi_lower, Phi_upper, alpha=0.25, color="C0")
 
     wt_gamma_model = gamma_waiting_times(
@@ -2560,7 +2434,7 @@ def plot_gamma_vs_fractal(
         occupation_parameters["alpha"],
     )
     # use it to refine theo_norm
-    theo_norm *= hat_rate_vs_real_rate
+    #theo_norm *= hat_rate_vs_real_rate
     occupation_parameters["hat_rate_vs_real_rate"] = hat_rate_vs_real_rate
 
     correction = theo_norm / trunc_norm
@@ -2581,7 +2455,8 @@ def plot_gamma_vs_fractal(
         f"Fractal model:\n"
         r"$D_\tau=$"
         f"{1. - occupation_parameters['n']:.2f}, "
-        r"$\tau_c=$"
+        # r"$\tau_c=$"
+        r"$\theta_c=$"
         f"{occupation_parameters['tau_c']:.2f}, "
         r"$\alpha=$"
         f"{occupation_parameters['alpha']:.2f}"
@@ -2600,14 +2475,16 @@ def plot_gamma_vs_fractal(
         1.0 - np.exp(-tau),
         color="dimgrey",
         lw=0.75,
-        label=r"Poisson: $1 - e^{-\lambda \tau}$",
+        # label=r"Poisson: $1 - e^{-\lambda \tau}$",
+        label=r"Poisson: $1 - e^{-\theta}$",
     )
     axes[1].plot(
         wt_bins,
         np.exp(-wt_bins),
         color="dimgrey",
         lw=0.75,
-        label=r"Poisson: $e^{-\lambda w}$",
+        # label=r"Poisson: $e^{-\lambda w}$",
+        label=r"Poisson: $e^{-\theta}$",
     )
 
     axes[0].legend(loc="lower right", handlelength=0.9)
