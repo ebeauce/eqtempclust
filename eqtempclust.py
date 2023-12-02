@@ -1192,6 +1192,7 @@ def fit_interevent_pdf(
             # this is the only correct solution so that
             # the gamma function satisfies the pdf constraints
             p0 = [gamma0]
+            model_kwargs["normalized"] = True
             model = lambda w, gamma: gamma_waiting_times(w, gamma, **model_kwargs)
             if loss == "l2_log":
                 bounds = ((param_bounds["gamma_min"]), (param_bounds["gamma_max"]))
@@ -1201,6 +1202,7 @@ def fit_interevent_pdf(
                 ]
         else:
             p0 = [gamma0, 1.0 / gamma0]
+            model_kwargs["normalized"] = False
             model = lambda w, gamma, beta: gamma_waiting_times(
                 w, gamma, beta=beta, **model_kwargs
             )
@@ -2324,6 +2326,7 @@ def plot_gamma_vs_fractal(
     num_points_fit=50,
     figname="occurrence_statistics",
     figtitle="",
+    plot_tau_min=False,
     **kwargs,
 ):
     """ """
@@ -2397,7 +2400,9 @@ def plot_gamma_vs_fractal(
     axes[0].fill_between(tau, Phi_lower, Phi_upper, alpha=0.25, color="C0")
 
     wt_gamma_model = gamma_waiting_times(
-        wt_fit, occupation_parameters["gamma"], beta=occupation_parameters["beta"]
+        wt_fit, occupation_parameters["gamma"],
+        beta=occupation_parameters["beta"],
+        normalized=False,
     )
     occupation_gamma_model = occupation_probability_gamma_model(
         tau_fit, occupation_parameters["gamma"], beta=occupation_parameters["beta"]
@@ -2468,7 +2473,8 @@ def plot_gamma_vs_fractal(
         tau_fit, occupation_fractal_model, ls="--", color="magenta", label=label
     )
     axes[1].plot(wt_fit, wt_fractal_model / correction, ls="--", color="magenta")
-    axes[1].axvline(occupation_parameters["tau_min"], color="magenta", lw=1.0)
+    if plot_tau_min:
+        axes[1].axvline(occupation_parameters["tau_min"], color="magenta", lw=1.0)
 
     axes[0].plot(
         tau,
