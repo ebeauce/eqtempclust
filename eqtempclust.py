@@ -795,7 +795,9 @@ def fit_occupation_probability(
             return
 
         squared_res = np.mean(
-            (log_Phi[selection] - gamma_occupation_log(tau[selection], *popt)) ** 2
+            (log_Phi[selection] - occupation_probability_gamma_model(
+                tau[selection], *popt, lamb=average_rate, log=True
+                )) ** 2
         )
         rms = np.sqrt(squared_res)
         var0 = np.var(log_Phi[selection])
