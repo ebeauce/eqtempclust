@@ -2045,6 +2045,10 @@ def run_occupation_analysis2(
     output["tau"] = tau
     # compute inter-event time pdf
     waiting_times = timings[1:] - timings[:-1]
+    #
+    #waiting_times = waiting_times[
+    #        waiting_times > np.finfo(waiting_times.dtype).resolution
+    #        ]
     wt_bins = np.logspace(np.log10(tau.min()), np.log10(tau.max()), nbins_wt)
     wt_pdf, wt_pdf_lower, wt_pdf_upper, wt_bins = interevent_pdf(
         waiting_times / waiting_times.mean(), return_midbins=True, bins=wt_bins
@@ -2329,6 +2333,7 @@ def plot_gamma_vs_fractal(
     figname="occurrence_statistics",
     figtitle="",
     plot_tau_min=False,
+    plot_physical_wt=False,
     **kwargs,
 ):
     """ """
@@ -2367,7 +2372,8 @@ def plot_gamma_vs_fractal(
     correction = theo_norm / trunc_norm
 
     fig, axes = plt.subplots(num=figname, ncols=2, figsize=(16, 7))
-    fig.suptitle(figtitle)
+    suptitle_y = 0.99 if plot_physical_wt else 0.98
+    fig.suptitle(figtitle, y=suptitle_y)
 
     # axes[1].set_title(r"Inter-event time pdf, $\rho_{\lambda W}$")
     axes[1].set_title(r"Inter-event time pdf, $\rho_{\Theta}$")
@@ -2518,5 +2524,18 @@ def plot_gamma_vs_fractal(
         axes[0].set_xscale("log")
     if kwargs.get("y_scale_log", True):
         axes[0].set_yscale("log")
+
+    if "wt_mean" in occupation_parameters and plot_physical_wt:
+        wt_mean = occupation_parameters["wt_mean"]
+        ax_real_time = axes[1].twiny()
+        ax_real_time.set_xlim(
+                axes[1].get_xlim()[0] * wt_mean, axes[1].get_xlim()[1] * wt_mean
+                )
+        ax_real_time.set_xscale("log")
+        ax_real_time.tick_params(axis="x", which="both", direction="in", pad=0.5)
+        ax_real_time.set_xlabel(r"Inter-event time, $w$", labelpad=-35)
+        #ax_real_time.set_xticklabels(
+        #        ax_real_time.get_xticklabels(), labelpad=1.
+        #        )
 
     return fig
