@@ -54,7 +54,7 @@ def compute_occupation_probability(
     normalized_tau_max=None,
     base_log=2,
     return_normalized_times=True,
-    return_valid_only=True,
+    use_valid_only=1,
     window_duration=None,
     min_num_events=5,
     shortest_resolved_interevent_time=5.0,
@@ -69,8 +69,7 @@ def compute_occupation_probability(
     eq_timings : numpy.ndarray
         Earthquake timings, in arbitrary units (but, in general, seconds).
     normalized_tau_min : float, optional
-        Smallest bin size in units of average inter-event time.
-normalized_tau_max        Default is 0.01.
+        Smallest bin size in units of average inter-event time. Default is 0.01.
     normalized_tau_max : float, optional
         Largest bin size in units of average inter-event time.
         Default is None. If `None`, `normalized_tau_max = max_waiting_time / avg_waiting_time`.
@@ -81,16 +80,22 @@ normalized_tau_max        Default is 0.01.
         If True (default), returns the time bin sizes in units of the
         average inter-event time. If False, the same units of `eq_timings`
         are used.
+    use_valid_only : int, optional
+        Integer taking a value in [0, 1, 2]. Defaults to 1.
+        - 0: Use all time bins between `normalized_tau_min` and
+          `normalized_tau_max`
+        - 1: Do not use time bins below which the maximum number of earthquakes
+          in any given bin is exactly 1. Below that, the occupation probability
+          trivially decreases proportionally to `tau`.
+        - 2: Do not use time bins below which the maximum number of earthquakes
+          in any given bin is exactly 1. In addition, do not use time bins that
+          are shorter than `shortest_resolved_interevent_time`.
     window_duration : float, optional
         The window duration used to calculate the average inter-event time.
         If None (default), `window_duration = max(eq_timings) - min(eq_timings)`.
     min_num_events : integer, optional
         The minimum number of events in order to compute the occupation probability.
         Should be at least 2 to not produce an error.
-    return_valid_only : boolean, optional
-        If True (default), do not return the occupation probability for time bin sizes
-        that are sufficiently small so that they contain at most one event. Below
-        this size, the occupation probability trivially decreases as `tau`.
     shortest_resolved_interevent_time : scalar, optional
         Shortest inter-event time resolved in the catalog, in units of
         `eq_timings`. This number is used to issue a warning if
@@ -142,13 +147,19 @@ normalized_tau_max        Default is 0.01.
     shortest_interval_size = normalized_tau_min * average_waiting_time
     # print(f"Shortest time interval is {shortest_interval_size:.2f}sec")
     if shortest_interval_size < shortest_resolved_interevent_time:
-        suggested_increase = shortest_resolved_interevent_time / shortest_interval_size
-        print(
-            "Warning! You are computing the occupation probability for"
-            " time intervals shorter than your shortest resolved "
-            "inter-event time. You should increase `normalized_tau_min`"
-            f" by a factor {suggested_increase:.2f}."
-        )
+        if use_valid_only == 2:
+            normalized_tau_min = (
+                    shortest_resolved_interevent_time / average_waiting_time
+                    )
+            shortest_interval_size = normalized_tau_min * average_waiting_time
+        else:
+            suggested_increase = shortest_resolved_interevent_time / shortest_interval_size
+            print(
+                "Warning! You are computing the occupation probability for"
+                " time intervals shorter than your shortest resolved "
+                "inter-event time. You should increase `normalized_tau_min`"
+                f" by a factor {suggested_increase:.2f}."
+            )
     normalized_eq_timings = eq_timings / average_waiting_time
     min_normalized_eq_timing = min(normalized_eq_timings)
     max_normalized_eq_timing = max(normalized_eq_timings)
@@ -218,7 +229,7 @@ normalized_tau_max        Default is 0.01.
         Phi_lower[i] = np.percentile(Phi_rsmpl, interval_uncertainty_pct / 2.0)
         Phi_upper[i] = np.percentile(Phi_rsmpl, 100.0 - interval_uncertainty_pct / 2.0)
         del occupied_bins
-    if return_valid_only:
+    if use_valid_only > 0:
         # only keep non-trivial interval sizes
         # keep the largest time bins for which num_max == 1 happens for the 1st time
         if np.sum(~valid) > 0:
@@ -289,7 +300,7 @@ def occupation_analysis(
     return_normalized_times=True,
     window_duration=None,
     min_num_events=5,
-    return_valid_only=True,
+    use_valid_only=1,
     shortest_resolved_interevent_time=5.0,
     model="fractal",
     ax=None,
@@ -327,7 +338,7 @@ def occupation_analysis(
         If None (default), `window_duration = max(eq_timings) - min(eq_timings)`.
     min_num_events : integer, optional
         The minimum number of events in order to compute the occupation probability.
-    return_valid_only : boolean, optional
+    use_valid_only : boolean, optional
         If True (default), do not return the occupation probability for time bin sizes
         that are sufficiently small so that they contain at most one event. Below
         this size, the occupation probability trivially decreases as `tau`.
@@ -376,6 +387,7 @@ def occupation_analysis(
             normalized_tau_max=normalized_tau_max,
             base_log=base_log,
             return_normalized_times=True,
+            use_valid_only=use_valid_only,
             window_duration=window_duration,
             shortest_resolved_interevent_time=shortest_resolved_interevent_time,
             num_resamplings=num_resamplings,
@@ -1815,6 +1827,7 @@ def run_occupation_analysis1(
     min_num_events=5,
     nbins_wt=20,
     shortest_resolved_time=5.0,
+    use_valid_only=1,
     fix_beta=True,
     loss_pdf="relative_entropy",
     loss_phi="l2_log",
@@ -1870,6 +1883,7 @@ def run_occupation_analysis1(
         normalized_tau_max=normalized_tau_max,
         base_log=base_log,
         min_num_events=min_num_events,
+        use_valid_only=use_valid_only,
         shortest_resolved_interevent_time=shortest_resolved_time,
         num_resamplings=num_resamplings,
     )
@@ -1988,6 +2002,7 @@ def run_occupation_analysis2(
     shortest_resolved_time=5.0,
     fix_beta=False,
     loss_phi="l2_log",
+    use_valid_only=1,
     base_log=2.0,
     num_resamplings=50,
 ):
@@ -2036,6 +2051,7 @@ def run_occupation_analysis2(
         normalized_tau_max=normalized_tau_max,
         base_log=base_log,
         min_num_events=min_num_events,
+        use_valid_only=use_valid_only,
         shortest_resolved_interevent_time=shortest_resolved_time,
         num_resamplings=num_resamplings,
     )
@@ -2149,6 +2165,7 @@ def run_occupation_analysis3(
     min_num_events=5,
     nbins_wt=20,
     shortest_resolved_time=5.0,
+    use_valid_only=1,
     loss_phi="l2_log",
     base_log=2.0,
     num_resamplings=50,
@@ -2199,6 +2216,7 @@ def run_occupation_analysis3(
         base_log=base_log,
         min_num_events=min_num_events,
         shortest_resolved_interevent_time=shortest_resolved_time,
+        use_valid_only=use_valid_only,
         num_resamplings=num_resamplings,
     )
     output["Phi"] = Phi
