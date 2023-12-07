@@ -140,10 +140,16 @@ def compute_occupation_probability(
     min_eq_timing, max_eq_timing = min(eq_timings), max(eq_timings)
     if window_duration is None:
         window_duration = max_eq_timing - min_eq_timing
-    # average rate is taken as the inverse of the average interval
-    average_rate = (len(eq_timings) - 1) / window_duration
-    average_waiting_time = 1.0 / average_rate
-    # print(f"Average waiting time is: {average_waiting_time:.2f}")
+    # average rate is taken as the inverse of the average waiting time
+    waiting_times = eq_timings[1:] - eq_timings[:-1]
+    if use_valid_only == 2:
+        average_waiting_time = np.mean(
+                waiting_times[waiting_times >= shortest_resolved_interevent_time]
+                )
+    else:
+        average_waiting_time = waiting_times.mean()
+    average_rate = 1. / average_waiting_time
+    #print(f"Average waiting time is: {average_waiting_time:.2f}")
     shortest_interval_size = normalized_tau_min * average_waiting_time
     # print(f"Shortest time interval is {shortest_interval_size:.2f}sec")
     if shortest_interval_size < shortest_resolved_interevent_time:
@@ -373,8 +379,16 @@ def occupation_analysis(
     """
     if window_duration is None:
         window_duration = eq_timings.max() - eq_timings.min()
-    earthquake_rate = len(eq_timings) / window_duration
-    avg_waiting_time = 1.0 / earthquake_rate
+    # average rate is taken as the inverse of the average waiting time
+    waiting_times = eq_timings[1:] - eq_timings[:-1]
+    if use_valid_only == 2:
+        average_waiting_time = np.mean(
+                waiting_times[waiting_times >= shortest_resolved_interevent_time]
+                )
+    else:
+        average_waiting_time = waiting_times.mean()
+    earthquake_rate = 1. / average_waiting_time
+    print(f"Average waiting time is: {average_waiting_time:.2f}")
     if pre_computed_Phi is not None:
         Phi = pre_computed_Phi["Phi"]
         Phi_lower = pre_computed_Phi["Phi_lower"]
@@ -407,7 +421,7 @@ def occupation_analysis(
         **kwargs,
     )
     if not return_normalized_times and num_windows == 1:
-        tau = normalized_tau * avg_waiting_time
+        tau = normalized_tau * average_waiting_time
     elif not return_normalized_times and num_windows > 1:
         print("Times have to be normalized with the multi-window calculation.")
         print("The output time intervals will be normalized.")
@@ -519,6 +533,7 @@ def occupation_analysis(
     occupation_parameters["distance_from_poisson"] = kullback_leibler_divergence(
         Phi_poisson, Phi
     )
+    occupation_parameters["wt_mean"] = average_waiting_time
     if return_figure:
         return tau, Phi, Phi_lower, Phi_upper, occupation_parameters, fig
     else:
@@ -1901,8 +1916,8 @@ def run_occupation_analysis1(
     output["wt_pdf_lower"] = wt_pdf_lower
     output["wt_pdf_upper"] = wt_pdf_upper
     output["wt_bins"] = wt_bins
-    output["wt_mean"] = waiting_times.mean()
-    output["wt_cov"] = np.std(waiting_times) / output["wt_mean"]
+    #output["wt_mean"] = waiting_times.mean()
+    #output["wt_cov"] = np.std(waiting_times) / output["wt_mean"]
 
     # fit gamma model to inter-event time pdf
     if fix_beta:
@@ -1943,6 +1958,7 @@ def run_occupation_analysis1(
         normalized_tau_max=normalized_tau_max,
         base_log=base_log,
         shortest_resolved_interevent_time=shortest_resolved_time,
+        use_valid_only=use_valid_only,
         return_figure=False,
         loss=loss_phi,
         pre_computed_Phi=output
@@ -1973,7 +1989,7 @@ def run_occupation_analysis1(
         gamma_waiting_times,
         gamma=output["gamma"],
         beta=output["beta"],
-        normalized=True,
+        normalized=False,
         C="theoretical",
     )
     num_params = 1 if fix_beta else 2
@@ -1989,6 +2005,9 @@ def run_occupation_analysis1(
     )
     num_params = 3
     output["aic_fractal"] = compute_aic(wt_norm, model, num_params=num_params)
+
+    output["wt_mean"] = fractal_model_parameters["wt_mean"]
+    output["wt_cov"] = np.std(waiting_times) / output["wt_mean"]
 
     return output
 
@@ -2073,8 +2092,8 @@ def run_occupation_analysis2(
     output["wt_pdf_lower"] = wt_pdf_lower
     output["wt_pdf_upper"] = wt_pdf_upper
     output["wt_bins"] = wt_bins
-    output["wt_mean"] = waiting_times.mean()
-    output["wt_cov"] = np.std(waiting_times) / output["wt_mean"]
+    #output["wt_mean"] = waiting_times.mean()
+    #output["wt_cov"] = np.std(waiting_times) / output["wt_mean"]
 
     # fit gamma model to occupation probability
     _, _, _, _, gamma_model_parameters = occupation_analysis(
@@ -2085,6 +2104,7 @@ def run_occupation_analysis2(
         normalized_tau_max=normalized_tau_max,
         base_log=base_log,
         shortest_resolved_interevent_time=shortest_resolved_time,
+        use_valid_only=use_valid_only,
         fix_beta=fix_beta,
         return_figure=False,
         loss=loss_phi,
@@ -2109,6 +2129,7 @@ def run_occupation_analysis2(
         normalized_tau_max=normalized_tau_max,
         base_log=base_log,
         shortest_resolved_interevent_time=shortest_resolved_time,
+        use_valid_only=use_valid_only,
         return_figure=False,
         loss=loss_phi,
         pre_computed_Phi=output
@@ -2138,7 +2159,7 @@ def run_occupation_analysis2(
         gamma_waiting_times,
         gamma=output["gamma"],
         beta=output["beta"],
-        normalized=True,
+        normalized=False,
         C="theoretical",
     )
     num_params = 1 if fix_beta else 2
@@ -2154,6 +2175,9 @@ def run_occupation_analysis2(
     )
     num_params = 3
     output["aic_fractal"] = compute_aic(wt_norm, model, num_params=num_params)
+
+    output["wt_mean"] = fractal_model_parameters["wt_mean"]
+    output["wt_cov"] = np.std(waiting_times) / output["wt_mean"]
 
     return output
 
@@ -2233,8 +2257,8 @@ def run_occupation_analysis3(
     output["wt_pdf_lower"] = wt_pdf_lower
     output["wt_pdf_upper"] = wt_pdf_upper
     output["wt_bins"] = wt_bins
-    output["wt_mean"] = waiting_times.mean()
-    output["wt_cov"] = np.std(waiting_times) / output["wt_mean"]
+    #output["wt_mean"] = waiting_times.mean()
+    #output["wt_cov"] = np.std(waiting_times) / output["wt_mean"]
 
     # fit gamma model to occupation probability
     # ------------- first, do not fix beta
@@ -2246,6 +2270,7 @@ def run_occupation_analysis3(
         normalized_tau_max=normalized_tau_max,
         base_log=base_log,
         shortest_resolved_interevent_time=shortest_resolved_time,
+        use_valid_only=use_valid_only,
         fix_beta=False,
         return_figure=False,
         loss=loss_phi,
@@ -2287,6 +2312,7 @@ def run_occupation_analysis3(
         normalized_tau_max=normalized_tau_max,
         base_log=base_log,
         shortest_resolved_interevent_time=shortest_resolved_time,
+        use_valid_only=use_valid_only,
         return_figure=False,
         loss=loss_phi,
     )
@@ -2315,7 +2341,7 @@ def run_occupation_analysis3(
         gamma_waiting_times,
         gamma=output["gamma"],
         beta=output["beta"],
-        normalized=True,
+        normalized=False,
         C="theoretical",
     )
     num_params = 2
@@ -2341,6 +2367,9 @@ def run_occupation_analysis3(
     )
     num_params = 3
     output["aic_fractal"] = compute_aic(wt_norm, model, num_params=num_params)
+
+    output["wt_mean"] = fractal_model_parameters["wt_mean"]
+    output["wt_cov"] = np.std(waiting_times) / output["wt_mean"]
 
     return output
 
