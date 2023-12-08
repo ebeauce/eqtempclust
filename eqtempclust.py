@@ -1977,13 +1977,28 @@ def run_occupation_analysis1(
     output["rms"] = fractal_model_parameters["rms"]
     output["var_reduction"] = fractal_model_parameters["var_reduction"]
 
+    # compute inter-event time pdf
+    waiting_times = timings[1:] - timings[:-1]
+    output["wt_mean"] = fractal_model_parameters["wt_mean"]
+    output["wt_cov"] = np.std(waiting_times) / output["wt_mean"]
+    normalized_waiting_times = waiting_times / output["wt_mean"]
+    wt_bins = np.logspace(np.log10(tau.min()), np.log10(tau.max()), nbins_wt)
+    wt_pdf, wt_pdf_lower, wt_pdf_upper, wt_bins = interevent_pdf(
+        normalized_waiting_times, return_midbins=True, bins=wt_bins
+    )
+    output["wt_pdf"] = wt_pdf
+    output["wt_pdf_lower"] = wt_pdf_lower
+    output["wt_pdf_upper"] = wt_pdf_upper
+    output["wt_bins"] = wt_bins
+
     # compute the Akaike Information Criterion for each model
-    wt_norm = waiting_times / waiting_times.mean()
     # discard waiting times below the smallest bin used here
     # because likelihood is extremely sensitive to noise at
     # very short waiting times
     wt_min = wt_bins[wt_pdf > 0].min()
-    wt_norm = wt_norm[wt_norm > wt_min]
+    normalized_waiting_times = normalized_waiting_times[
+            normalized_waiting_times > wt_bin
+            ]
     # --------- gamma aic
     model = partial(
         gamma_waiting_times,
@@ -1993,7 +2008,9 @@ def run_occupation_analysis1(
         C="theoretical",
     )
     num_params = 1 if fix_beta else 2
-    output["aic_gamma"] = compute_aic(wt_norm, model, num_params=num_params)
+    output["aic_gamma"] = compute_aic(
+            normalized_waiting_times, model, num_params=num_params
+            )
     # --------- fractal aic
     model = partial(
         fractal_waiting_times,
@@ -2004,10 +2021,9 @@ def run_occupation_analysis1(
         tau_min=output["tau_min"],
     )
     num_params = 3
-    output["aic_fractal"] = compute_aic(wt_norm, model, num_params=num_params)
-
-    output["wt_mean"] = fractal_model_parameters["wt_mean"]
-    output["wt_cov"] = np.std(waiting_times) / output["wt_mean"]
+    output["aic_fractal"] = compute_aic(
+            normalized_waiting_times, model, num_params=num_params
+            )
 
     return output
 
@@ -2078,22 +2094,6 @@ def run_occupation_analysis2(
     output["Phi_lower"] = Phi_lower
     output["Phi_upper"] = Phi_upper
     output["tau"] = tau
-    # compute inter-event time pdf
-    waiting_times = timings[1:] - timings[:-1]
-    #
-    #waiting_times = waiting_times[
-    #        waiting_times > np.finfo(waiting_times.dtype).resolution
-    #        ]
-    wt_bins = np.logspace(np.log10(tau.min()), np.log10(tau.max()), nbins_wt)
-    wt_pdf, wt_pdf_lower, wt_pdf_upper, wt_bins = interevent_pdf(
-        waiting_times / waiting_times.mean(), return_midbins=True, bins=wt_bins
-    )
-    output["wt_pdf"] = wt_pdf
-    output["wt_pdf_lower"] = wt_pdf_lower
-    output["wt_pdf_upper"] = wt_pdf_upper
-    output["wt_bins"] = wt_bins
-    #output["wt_mean"] = waiting_times.mean()
-    #output["wt_cov"] = np.std(waiting_times) / output["wt_mean"]
 
     # fit gamma model to occupation probability
     _, _, _, _, gamma_model_parameters = occupation_analysis(
@@ -2147,13 +2147,28 @@ def run_occupation_analysis2(
     output["D_tau_err"] = output["n_err"]
     output["var_reduction"] = fractal_model_parameters["var_reduction"]
 
+    # compute inter-event time pdf
+    waiting_times = timings[1:] - timings[:-1]
+    output["wt_mean"] = fractal_model_parameters["wt_mean"]
+    output["wt_cov"] = np.std(waiting_times) / output["wt_mean"]
+    normalized_waiting_times = waiting_times / output["wt_mean"]
+    wt_bins = np.logspace(np.log10(tau.min()), np.log10(tau.max()), nbins_wt)
+    wt_pdf, wt_pdf_lower, wt_pdf_upper, wt_bins = interevent_pdf(
+        normalized_waiting_times, return_midbins=True, bins=wt_bins
+    )
+    output["wt_pdf"] = wt_pdf
+    output["wt_pdf_lower"] = wt_pdf_lower
+    output["wt_pdf_upper"] = wt_pdf_upper
+    output["wt_bins"] = wt_bins
+
     # compute the Akaike Information Criterion for each model
-    wt_norm = waiting_times / waiting_times.mean()
     # discard waiting times below the smallest bin used here
     # because likelihood is extremely sensitive to noise at
     # very short waiting times
     wt_min = wt_bins[wt_pdf > 0].min()
-    wt_norm = wt_norm[wt_norm > wt_min]
+    normalized_waiting_times = normalized_waiting_times[
+            normalized_waiting_times > wt_min
+            ]
     # --------- gamma aic
     model = partial(
         gamma_waiting_times,
@@ -2163,7 +2178,9 @@ def run_occupation_analysis2(
         C="theoretical",
     )
     num_params = 1 if fix_beta else 2
-    output["aic_gamma"] = compute_aic(wt_norm, model, num_params=num_params)
+    output["aic_gamma"] = compute_aic(
+            normalized_waiting_times, model, num_params=num_params
+            )
     # --------- fractal aic
     model = partial(
         fractal_waiting_times,
@@ -2174,10 +2191,9 @@ def run_occupation_analysis2(
         tau_min=output["tau_min"],
     )
     num_params = 3
-    output["aic_fractal"] = compute_aic(wt_norm, model, num_params=num_params)
-
-    output["wt_mean"] = fractal_model_parameters["wt_mean"]
-    output["wt_cov"] = np.std(waiting_times) / output["wt_mean"]
+    output["aic_fractal"] = compute_aic(
+            normalized_waiting_times, model, num_params=num_params
+            )
 
     return output
 
@@ -2247,18 +2263,6 @@ def run_occupation_analysis3(
     output["Phi_lower"] = Phi_lower
     output["Phi_upper"] = Phi_upper
     output["tau"] = tau
-    # compute inter-event time pdf
-    waiting_times = timings[1:] - timings[:-1]
-    wt_bins = np.logspace(np.log10(tau.min()), np.log10(tau.max()), nbins_wt)
-    wt_pdf, wt_pdf_lower, wt_pdf_upper, wt_bins = interevent_pdf(
-        waiting_times / waiting_times.mean(), return_midbins=True, bins=wt_bins
-    )
-    output["wt_pdf"] = wt_pdf
-    output["wt_pdf_lower"] = wt_pdf_lower
-    output["wt_pdf_upper"] = wt_pdf_upper
-    output["wt_bins"] = wt_bins
-    #output["wt_mean"] = waiting_times.mean()
-    #output["wt_cov"] = np.std(waiting_times) / output["wt_mean"]
 
     # fit gamma model to occupation probability
     # ------------- first, do not fix beta
@@ -2329,13 +2333,29 @@ def run_occupation_analysis3(
     output["D_tau_err"] = output["n_err"]
     output["var_reduction"] = fractal_model_parameters["var_reduction"]
 
+    # compute inter-event time pdf
+    waiting_times = timings[1:] - timings[:-1]
+    output["wt_mean"] = fractal_model_parameters["wt_mean"]
+    output["wt_cov"] = np.std(waiting_times) / output["wt_mean"]
+    normalized_waiting_times = waiting_times / output["wt_mean"]
+    wt_bins = np.logspace(np.log10(tau.min()), np.log10(tau.max()), nbins_wt)
+    wt_pdf, wt_pdf_lower, wt_pdf_upper, wt_bins = interevent_pdf(
+        normalized_waiting_times, return_midbins=True, bins=wt_bins
+    )
+    output["wt_pdf"] = wt_pdf
+    output["wt_pdf_lower"] = wt_pdf_lower
+    output["wt_pdf_upper"] = wt_pdf_upper
+    output["wt_bins"] = wt_bins
+
     # compute the Akaike Information Criterion for each model
-    wt_norm = waiting_times / waiting_times.mean()
     # discard waiting times below the smallest bin used here
     # because likelihood is extremely sensitive to noise at
     # very short waiting times
     wt_min = wt_bins[wt_pdf > 0].min()
-    wt_norm = wt_norm[wt_norm > wt_min]
+    normalized_waiting_times = normalized_waiting_times[
+            normalized_waiting_times > wt_min
+            ]
+
     # --------- gamma aic
     model = partial(
         gamma_waiting_times,
@@ -2345,7 +2365,9 @@ def run_occupation_analysis3(
         C="theoretical",
     )
     num_params = 2
-    output["aic_gamma"] = compute_aic(wt_norm, model, num_params=num_params)
+    output["aic_gamma"] = compute_aic(
+            normalized_waiting_times, model, num_params=num_params
+            )
     # --------- gamma with fixed beta aic
     model = partial(
         gamma_waiting_times,
@@ -2355,7 +2377,9 @@ def run_occupation_analysis3(
         C="theoretical",
     )
     num_params = 1
-    output["aic_gamma_fixed_beta"] = compute_aic(wt_norm, model, num_params=num_params)
+    output["aic_gamma_fixed_beta"] = compute_aic(
+            normalized_waiting_times, model, num_params=num_params
+            )
     # --------- fractal aic
     model = partial(
         fractal_waiting_times,
@@ -2366,10 +2390,9 @@ def run_occupation_analysis3(
         tau_min=output["tau_min"],
     )
     num_params = 3
-    output["aic_fractal"] = compute_aic(wt_norm, model, num_params=num_params)
-
-    output["wt_mean"] = fractal_model_parameters["wt_mean"]
-    output["wt_cov"] = np.std(waiting_times) / output["wt_mean"]
+    output["aic_fractal"] = compute_aic(
+            normalized_waiting_times, model, num_params=num_params
+            )
 
     return output
 
