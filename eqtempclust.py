@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import logging, warnings
 
 import scipy.special as scispec
 import scipy.optimize
@@ -143,11 +144,16 @@ def compute_occupation_probability(
     # average rate is taken as the inverse of the average waiting time
     waiting_times = eq_timings[1:] - eq_timings[:-1]
     if use_valid_only == 2:
-        average_waiting_time = np.mean(
+        #average_waiting_time = np.mean(
+        #        waiting_times[waiting_times >= shortest_resolved_interevent_time]
+        #        )
+        average_waiting_time = get_mean_interevent_time(
                 waiting_times[waiting_times >= shortest_resolved_interevent_time]
                 )
     else:
-        average_waiting_time = waiting_times.mean()
+        #average_waiting_time = waiting_times.mean()
+        average_waiting_time = get_mean_interevent_time(waiting_times)
+
     average_rate = 1. / average_waiting_time
     #print(f"Average waiting time is: {average_waiting_time:.2f}")
     shortest_interval_size = normalized_tau_min * average_waiting_time
@@ -160,7 +166,7 @@ def compute_occupation_probability(
             shortest_interval_size = normalized_tau_min * average_waiting_time
         else:
             suggested_increase = shortest_resolved_interevent_time / shortest_interval_size
-            print(
+            warnings.warn(
                 "Warning! You are computing the occupation probability for"
                 " time intervals shorter than your shortest resolved "
                 "inter-event time. You should increase `normalized_tau_min`"
@@ -213,8 +219,8 @@ def compute_occupation_probability(
         # print(f"Bin count done. ({occupied_bins.dtype})")
         num_bins = len(occupied_bins)
         Phi[i] = np.sum(occupied_bins) / np.float64(nbins[i])
-        if Phi[i] > 1.0:
-            breakpoint()
+        #if Phi[i] > 1.0:
+        #    breakpoint()
         Phi_rsmpl = np.zeros(num_resamplings, dtype=np.float32)
         # resampled_occupied_bins = np.zeros(nbins[i], dtype=bool)
         for j in range(num_resamplings):
@@ -296,6 +302,27 @@ def fractal_analysis(*args, **kwargs):
     """
     return occupation_analysis(*args, **kwargs)
 
+def get_mean_interevent_time(interevent_times, method="bootstrap", **kwargs):
+    """Estimate of mean inter-event time.
+    """
+    if method == "median":
+        med = np.median(interevent_times)
+        # then, approximate mean under Poissonian conditions
+        mean = med / np.log(2.)
+    elif method == "bootstrap":
+        num_bootstraps = kwargs.get("num_bootstraps", 25)
+        means = np.zeros(num_bootstraps, dtype=np.float64)
+        for i in range(num_bootstraps):
+            means[i] = np.random.choice(
+                    interevent_times, size=len(interevent_times), replace=True
+                    ).mean()
+        # the mean is an unbiased estimator, so, theoretically, the average 
+        # value of the mean operator over many replica should be the true 
+        # mean value
+        mean = np.mean(means)
+    elif method == "naive":
+        mean = interevent_times.mean()
+    return mean
 
 def occupation_analysis(
     eq_timings,
@@ -382,13 +409,17 @@ def occupation_analysis(
     # average rate is taken as the inverse of the average waiting time
     waiting_times = eq_timings[1:] - eq_timings[:-1]
     if use_valid_only == 2:
-        average_waiting_time = np.mean(
+        #average_waiting_time = np.mean(
+        #        waiting_times[waiting_times >= shortest_resolved_interevent_time]
+        #        )
+        average_waiting_time = get_mean_interevent_time(
                 waiting_times[waiting_times >= shortest_resolved_interevent_time]
                 )
     else:
-        average_waiting_time = waiting_times.mean()
+        #average_waiting_time = waiting_times.mean()
+        average_waiting_time = get_mean_interevent_time(waiting_times)
     earthquake_rate = 1. / average_waiting_time
-    print(f"Average waiting time is: {average_waiting_time:.2f}")
+    #print(f"Average waiting time is: {average_waiting_time:.2f}")
     if pre_computed_Phi is not None:
         Phi = pre_computed_Phi["Phi"]
         Phi_lower = pre_computed_Phi["Phi_lower"]
@@ -420,13 +451,8 @@ def occupation_analysis(
         average_rate=1.0,
         **kwargs,
     )
-    if not return_normalized_times and num_windows == 1:
+    if not return_normalized_times:
         tau = normalized_tau * average_waiting_time
-    elif not return_normalized_times and num_windows > 1:
-        print("Times have to be normalized with the multi-window calculation.")
-        print("The output time intervals will be normalized.")
-        tau = normalized_tau
-        earthquake_rate = 1.0
     else:
         tau = normalized_tau
         earthquake_rate = 1.0
@@ -1334,6 +1360,8 @@ def occupation_Poissonian_uncertainty(
 
 def compute_aic(x, model, num_params):
     """Akaike Information Criterion."""
+    if len(x) == 0:
+        return np.inf
     likelihood = model(x)
     argmax = likelihood.argmax()
     if np.isinf(likelihood[argmax]):
@@ -1866,6 +1894,16 @@ def run_occupation_analysis1(
         Number of bins for the inter-event time PDF (default is 20).
     shortest_resolved_time : float, optional
         Minimum resolved inter-event time (default is 5.0).
+    use_valid_only : int, optional
+        Integer taking a value in [0, 1, 2]. Defaults to 1.
+        - 0: Use all time bins between `normalized_tau_min` and
+          `normalized_tau_max`
+        - 1: Do not use time bins below which the maximum number of earthquakes
+          in any given bin is exactly 1. Below that, the occupation probability
+          trivially decreases proportionally to `tau`.
+        - 2: Do not use time bins below which the maximum number of earthquakes
+          in any given bin is exactly 1. In addition, do not use time bins that
+          are shorter than `shortest_resolved_interevent_time`.
     fix_beta : bool, optional
         Whether to fix the beta parameter in the gamma model (default is True).
     loss_pdf : str, optional
@@ -1997,7 +2035,7 @@ def run_occupation_analysis1(
     # very short waiting times
     wt_min = wt_bins[wt_pdf > 0].min()
     normalized_waiting_times = normalized_waiting_times[
-            normalized_waiting_times > wt_bin
+            normalized_waiting_times > wt_min
             ]
     # --------- gamma aic
     model = partial(
@@ -2011,6 +2049,10 @@ def run_occupation_analysis1(
     output["aic_gamma"] = compute_aic(
             normalized_waiting_times, model, num_params=num_params
             )
+    if np.isinf(output["aic_gamma"]):
+        # very few waiting times fell in the tested range of normalized tau
+        output["gamma"] = np.nan
+        output["beta"] = np.nan
     # --------- fractal aic
     model = partial(
         fractal_waiting_times,
@@ -2024,7 +2066,11 @@ def run_occupation_analysis1(
     output["aic_fractal"] = compute_aic(
             normalized_waiting_times, model, num_params=num_params
             )
-
+    if np.isinf(output["aic_fractal"]):
+        # very few waiting times fell in the tested range of normalized tau
+        output["n"] = np.nan
+        output["tau_c"] = np.nan
+        output["alpha"] = np.nan
     return output
 
 
@@ -2058,6 +2104,16 @@ def run_occupation_analysis2(
         Number of bins for the inter-event time PDF (default is 20).
     shortest_resolved_time : float, optional
         Minimum resolved inter-event time (default is 5.0).
+    use_valid_only : int, optional
+        Integer taking a value in [0, 1, 2]. Defaults to 1.
+        - 0: Use all time bins between `normalized_tau_min` and
+          `normalized_tau_max`
+        - 1: Do not use time bins below which the maximum number of earthquakes
+          in any given bin is exactly 1. Below that, the occupation probability
+          trivially decreases proportionally to `tau`.
+        - 2: Do not use time bins below which the maximum number of earthquakes
+          in any given bin is exactly 1. In addition, do not use time bins that
+          are shorter than `shortest_resolved_interevent_time`.
     loss_phi : str, optional
         Loss function for occupation probability fractal model fitting (default is "l2_log").
     base_log : float, optional
@@ -2227,6 +2283,16 @@ def run_occupation_analysis3(
         Number of bins for the inter-event time PDF (default is 20).
     shortest_resolved_time : float, optional
         Minimum resolved inter-event time (default is 5.0).
+    use_valid_only : int, optional
+        Integer taking a value in [0, 1, 2]. Defaults to 1.
+        - 0: Use all time bins between `normalized_tau_min` and
+          `normalized_tau_max`
+        - 1: Do not use time bins below which the maximum number of earthquakes
+          in any given bin is exactly 1. Below that, the occupation probability
+          trivially decreases proportionally to `tau`.
+        - 2: Do not use time bins below which the maximum number of earthquakes
+          in any given bin is exactly 1. In addition, do not use time bins that
+          are shorter than `shortest_resolved_interevent_time`.
     loss_phi : str, optional
         Loss function for occupation probability fractal model fitting (default is "l2_log").
     base_log : float, optional
@@ -2400,10 +2466,13 @@ def run_occupation_analysis3(
 def plot_gamma_vs_fractal(
     occupation_parameters,
     num_points_fit=50,
+    ot_time_series=None,
     figname="occurrence_statistics",
     figtitle="",
     plot_tau_min=False,
     plot_physical_wt=False,
+    plot_poisson=True,
+    axes=None,
     **kwargs,
 ):
     """ """
@@ -2441,7 +2510,25 @@ def plot_gamma_vs_fractal(
     )
     correction = theo_norm / trunc_norm
 
-    fig, axes = plt.subplots(num=figname, ncols=2, figsize=(16, 7))
+    if ot_time_series is not None:
+        figsize = (16, 13)
+    else:
+        figsize = (16, 7)
+
+    if axes is None:
+        fig = plt.figure(figname, figsize=figsize)
+        if ot_time_series is not None:
+            grid = fig.add_gridspec(2, 2)
+            ax1 = fig.add_subplot(grid[0, 0])
+            ax2 = fig.add_subplot(grid[0, 1])
+            ax3 = fig.add_subplot(grid[1, :])
+            axes = [ax1, ax2, ax3]
+        else:
+            ax1 = fig.add_subplot(121)
+            ax2 = fig.add_subplot(122)
+            axes = [ax1, ax2]
+    else:
+        fig = axes[0].get_figure()
     suptitle_y = 0.99 if plot_physical_wt else 0.98
     fig.suptitle(figtitle, y=suptitle_y)
 
@@ -2554,22 +2641,23 @@ def plot_gamma_vs_fractal(
     if plot_tau_min:
         axes[1].axvline(occupation_parameters["tau_min"], color="magenta", lw=1.0)
 
-    axes[0].plot(
-        tau,
-        1.0 - np.exp(-tau),
-        color="dimgrey",
-        lw=0.75,
-        # label=r"Poisson: $1 - e^{-\lambda \tau}$",
-        label=r"Poisson: $1 - e^{-\theta}$",
-    )
-    axes[1].plot(
-        wt_bins,
-        np.exp(-wt_bins),
-        color="dimgrey",
-        lw=0.75,
-        # label=r"Poisson: $e^{-\lambda w}$",
-        label=r"Poisson: $e^{-\theta}$",
-    )
+    if plot_poisson:
+        axes[0].plot(
+            tau,
+            1.0 - np.exp(-tau),
+            color="dimgrey",
+            lw=0.75,
+            # label=r"Poisson: $1 - e^{-\lambda \tau}$",
+            label=r"Poisson: $1 - e^{-\theta}$",
+        )
+        axes[1].plot(
+            wt_bins,
+            np.exp(-wt_bins),
+            color="dimgrey",
+            lw=0.75,
+            # label=r"Poisson: $e^{-\lambda w}$",
+            label=r"Poisson: $e^{-\theta}$",
+        )
 
     axes[0].legend(loc="lower right", handlelength=0.9)
     axes[1].legend(loc="lower left", handlelength=0.9)
@@ -2607,5 +2695,20 @@ def plot_gamma_vs_fractal(
         #ax_real_time.set_xticklabels(
         #        ax_real_time.get_xticklabels(), labelpad=1.
         #        )
+
+    if ot_time_series is not None:
+        ot_time_series = np.sort(np.asarray(ot_time_series))
+        interevent_time = ot_time_series[1:] - ot_time_series[:-1]
+        axes[2].scatter(
+                ot_time_series[1:],
+                interevent_time,
+                marker=".",
+                color="k",
+                rasterized=True,
+        )
+        axes[2].set_yscale("log")
+        #axes[2].set_title("Template {tid} + {DELTA_R_KM:.1f}km-neighborhood return times")
+        axes[2].set_ylabel("Inter-event time (s)")
+        axes[2].set_xlabel("Origin time (s)")
 
     return fig
