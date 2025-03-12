@@ -182,6 +182,7 @@ def compute_occupation_probability(
     normalized_tau, nbins = build_time_intervals(
         normalized_time_range, normalized_tau_min, normalized_tau_max, base_log=base_log
     )
+    print(f"Inside compute_occ: largest time interval is: {normalized_tau.max():.2f}")
     # -------------------------------
     rescaled_eq_timings = (normalized_eq_timings - min_normalized_eq_timing) / (
         max_normalized_eq_timing - min_normalized_eq_timing
@@ -244,8 +245,8 @@ def compute_occupation_probability(
     if use_valid_only > 0:
         # only keep non-trivial interval sizes
         # keep the largest time bins for which num_max == 1 happens for the 1st time
-        if np.sum(~valid) > 0:
-            valid[np.where(~valid)[0][-1]] = True
+        #if np.sum(~valid) > 0:
+        #    valid[np.where(~valid)[0][-1]] = True
         (Phi, Phi_lower, Phi_upper, normalized_tau) = (
             Phi[valid],
             Phi_lower[valid],
@@ -655,7 +656,7 @@ def fit_occupation_probability(
         "n_min": 0.0,
         "n_max": 1.0,
         "alpha_min": 0.25,
-        "alpha_max": 10.00,
+        "alpha_max": 25.00,
         "gamma_min": 0.0,
         "gamma_max": 1.0,
         "beta_min": 0.0,
@@ -1129,7 +1130,8 @@ def interevent_pdf(
         )
 
     if return_midbins:
-        ie_time_bins = (ie_time_bins[1:] + ie_time_bins[:-1]) / 2.0
+        ie_time_log_bins = np.log10(ie_time_bins)
+        ie_time_bins = 10.**((ie_time_log_bins[1:] + ie_time_log_bins[:-1]) / 2.0)
     return ie_pdf, ie_pdf_lower, ie_pdf_upper, ie_time_bins
 
 
@@ -1304,6 +1306,10 @@ def fit_interevent_pdf(
                 (param_bounds["alpha_min"], param_bounds["alpha_max"]),
             ]
     if loss == "l2_log":
+        #print("y:\n")
+        #print(np.log10(pdf[valid]))
+        #print("x:\n")
+        #print(ie_times[valid])
         popt, pcov = curve_fit(
             model,
             ie_times[valid],
@@ -1417,7 +1423,7 @@ def occupation_probability_fractal_model(tau, n, tau_c, alpha, log=False):
 
 def cdf_fractal(w, n, tau_c, alpha, lbd=1.0):
     A = (tau_c / w) ** (n * alpha)
-    return 1.0 - n / lbd * w ** (-1) * A * (1 + A) ** (-1 / alpha - 1)
+    return 1.0 - n / lbd * (1. / w) * A * (1 + A) ** (-1 / alpha - 1)
 
 
 def tau_min_fractal(n, tau_c, alpha, lbd=1.0):
@@ -1492,7 +1498,8 @@ def fractal_waiting_times(w, n, tau_c, alpha, lbd=1.0, tau_min=None, log=False):
 
 
 def theoretical_norm_fractal(n, lbd=1.0):
-    return n / lbd
+    return 1.
+    #return n / lbd
 
 
 def truncated_norm_fractal(n, tau_c, alpha, tau_min, tau_max, lbd=1.0):
@@ -1552,7 +1559,9 @@ def estimate_sample_rate_vs_real_rate(wt_bins, pdf, n, theta_c, alpha):
     bin_width = wt_bins[1:] - wt_bins[:-1]
     pdf_midbin = (pdf[1:] + pdf[:-1]) / 2.0
     integral = np.sum(pdf_midbin * bin_width)
-    # 1/integral should be equal to trunc_norm
+    # integral should be equal to trunc_norm,
+    # but, instead, there's a difference due to
+    # the fact that lbd_hat / lbd_real is not exactly 1
     hat_rate_vs_real_rate = integral * trunc_norm
     return hat_rate_vs_real_rate
 
@@ -1598,6 +1607,13 @@ def occupation_probability_gamma_model(tau, gamma, beta=None, lamb=None, log=Fal
     else:
         return Phi_tau
 
+def cdf_gamma(w, gamma, beta, lbd=1.):
+    return scispec.gammainc(gamma, lbd * w / beta)
+
+def inverse_cdf_gamma(r, gamma, beta, lbd=1.):
+    """Inverse of gamma cdf using `scipy.special.gammaincinv`.
+    """
+    return beta / lbd * scispec.gammaincinv(gamma, r)
 
 def truncated_norm_gamma(gamma, beta, tau_min, tau_max):
     """Normalization pre-factor in the gamma pdf over a truncated support.
@@ -1702,10 +1718,15 @@ def gamma_waiting_times(
         C = theoretical_norm_gamma(gamma, beta)
     elif C == "truncated":
         C = truncated_norm_gamma(gamma, beta, waiting_time.min(), waiting_time.max())
+    #if log:
+    #    return np.log10(
+    #        C * waiting_time ** (gamma - 1.0) * np.exp(-waiting_time / beta)
+    #    )
     if log:
-        return np.log10(
-            C * waiting_time ** (gamma - 1.0) * np.exp(-waiting_time / beta)
-        )
+        return (
+                np.log10(C) + (gamma - 1.0) * np.log10(waiting_time)
+                - (waiting_time / beta) * np.log10(np.exp(1.)) 
+                )
     else:
         return C * waiting_time ** (gamma - 1.0) * np.exp(-waiting_time / beta)
 
@@ -1880,6 +1901,9 @@ def run_occupation_analysis1(
     """
     Perform occupation analysis on event timings and inter-event times.
 
+    Fit the fractal model to the occupation probability and the gamma model
+    to the inter-event time distribution.
+
     Parameters:
     -----------
     timings : numpy.ndarray
@@ -2022,18 +2046,23 @@ def run_occupation_analysis1(
     normalized_waiting_times = waiting_times / output["wt_mean"]
     wt_bins = np.logspace(np.log10(tau.min()), np.log10(tau.max()), nbins_wt)
     wt_pdf, wt_pdf_lower, wt_pdf_upper, wt_bins = interevent_pdf(
-        normalized_waiting_times, return_midbins=True, bins=wt_bins
+        normalized_waiting_times, return_midbins=False, bins=wt_bins
     )
     output["wt_pdf"] = wt_pdf
     output["wt_pdf_lower"] = wt_pdf_lower
     output["wt_pdf_upper"] = wt_pdf_upper
-    output["wt_bins"] = wt_bins
+    wt_bin_width = wt_bins[1:] - wt_bins[:-1]
+    wt_log_bins = np.log10(wt_bins)
+    output["wt_bins"] = 10.**((wt_log_bins[1:] + wt_log_bins[:-1]) / 2.)
+    output["wt_bin_width"] = wt_bin_width
+    output["wt_bin_left_egde"] = wt_bins[:-1]
+    output["wt_bin_right_edge"] = wt_bins[1:]
 
     # compute the Akaike Information Criterion for each model
     # discard waiting times below the smallest bin used here
     # because likelihood is extremely sensitive to noise at
     # very short waiting times
-    wt_min = wt_bins[wt_pdf > 0].min()
+    wt_min = output["wt_bin_left_egde"][wt_pdf > 0].min()
     normalized_waiting_times = normalized_waiting_times[
             normalized_waiting_times > wt_min
             ]
@@ -2089,6 +2118,9 @@ def run_occupation_analysis2(
 ):
     """
     Perform occupation analysis on event timings and inter-event times.
+
+    Fit the fractal model to the occupation probability and the gamma model
+    to the occupation probability.
 
     Parameters:
     -----------
@@ -2150,6 +2182,7 @@ def run_occupation_analysis2(
     output["Phi_lower"] = Phi_lower
     output["Phi_upper"] = Phi_upper
     output["tau"] = tau
+    print(f"Largest time interval is: {tau.max():.2e}")
 
     # fit gamma model to occupation probability
     _, _, _, _, gamma_model_parameters = occupation_analysis(
@@ -2210,18 +2243,23 @@ def run_occupation_analysis2(
     normalized_waiting_times = waiting_times / output["wt_mean"]
     wt_bins = np.logspace(np.log10(tau.min()), np.log10(tau.max()), nbins_wt)
     wt_pdf, wt_pdf_lower, wt_pdf_upper, wt_bins = interevent_pdf(
-        normalized_waiting_times, return_midbins=True, bins=wt_bins
+        normalized_waiting_times, return_midbins=False, bins=wt_bins
     )
     output["wt_pdf"] = wt_pdf
     output["wt_pdf_lower"] = wt_pdf_lower
     output["wt_pdf_upper"] = wt_pdf_upper
-    output["wt_bins"] = wt_bins
+    wt_bin_width = wt_bins[1:] - wt_bins[:-1]
+    wt_log_bins = np.log10(wt_bins)
+    output["wt_bins"] = 10.**((wt_log_bins[1:] + wt_log_bins[:-1]) / 2.)
+    output["wt_bin_width"] = wt_bin_width
+    output["wt_bin_left_egde"] = wt_bins[:-1]
+    output["wt_bin_right_edge"] = wt_bins[1:]
 
     # compute the Akaike Information Criterion for each model
     # discard waiting times below the smallest bin used here
     # because likelihood is extremely sensitive to noise at
     # very short waiting times
-    wt_min = wt_bins[wt_pdf > 0].min()
+    wt_min = output["wt_bin_left_egde"][wt_pdf > 0].min()
     normalized_waiting_times = normalized_waiting_times[
             normalized_waiting_times > wt_min
             ]
@@ -2406,18 +2444,23 @@ def run_occupation_analysis3(
     normalized_waiting_times = waiting_times / output["wt_mean"]
     wt_bins = np.logspace(np.log10(tau.min()), np.log10(tau.max()), nbins_wt)
     wt_pdf, wt_pdf_lower, wt_pdf_upper, wt_bins = interevent_pdf(
-        normalized_waiting_times, return_midbins=True, bins=wt_bins
+        normalized_waiting_times, return_midbins=False, bins=wt_bins
     )
     output["wt_pdf"] = wt_pdf
     output["wt_pdf_lower"] = wt_pdf_lower
     output["wt_pdf_upper"] = wt_pdf_upper
-    output["wt_bins"] = wt_bins
+    wt_bin_width = wt_bins[1:] - wt_bins[:-1]
+    wt_log_bins = np.log10(wt_bins)
+    output["wt_bins"] = 10.**((wt_log_bins[1:] + wt_log_bins[:-1]) / 2.)
+    output["wt_bin_width"] = wt_bin_width
+    output["wt_bin_left_egde"] = wt_bins[:-1]
+    output["wt_bin_right_edge"] = wt_bins[1:]
 
     # compute the Akaike Information Criterion for each model
     # discard waiting times below the smallest bin used here
     # because likelihood is extremely sensitive to noise at
     # very short waiting times
-    wt_min = wt_bins[wt_pdf > 0].min()
+    wt_min = output["wt_bin_left_egde"][wt_pdf > 0].min()
     normalized_waiting_times = normalized_waiting_times[
             normalized_waiting_times > wt_min
             ]
