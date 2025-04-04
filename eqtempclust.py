@@ -681,8 +681,6 @@ def fit_occupation_probability(
         for log_tau_c in range_log_tau_c:
             # print(f'Cutoff time bin: {log_tau_c:.2f}')
             selection = (tau >= tau_min) & (log_tau <= log_tau_c)
-            # alpha, a1, r_val, p_val, stderr = linear_regression(
-            #    log_tau[selection], log_Phi[selection])
             weights = np.ones(np.sum(selection))
             # give less weight to region around cutoff
             weights[(log_tau[selection] > -0.5) & (log_tau[selection] < 0.5)] = 0.2
@@ -704,9 +702,7 @@ def fit_occupation_probability(
     elif model == "inverse_function" or model == "fractal":
         selection = tau >= tau_min
         # first guess parameters
-        # tau_c_max = tau[Phi > 0.95][0]
         D_random = 0.1
-        # tau_c = theoretical_tau_c(1.0 - D_random, tau_min)
         tau_c = 1.0
         sharpness = 2.0
         # model with data-dependent theta_min
@@ -748,7 +744,6 @@ def fit_occupation_probability(
                 fractal_occupation_log,
                 tau[selection],
                 log_Phi[selection],
-                # Phi[selection],
                 p0=p0,
                 bounds=bounds,
                 **kwargs,
@@ -783,7 +778,6 @@ def fit_occupation_probability(
         occupation_parameters["log_tau_c_err"] = abs(1.0 / popt[1]) * perr[1]
         occupation_parameters["alpha"] = popt[2]
         occupation_parameters["alpha_err"] = perr[2]
-        # occupation_parameters["theta_min"] = theoretical_theta_min(popt[0], popt[1])
         occupation_parameters["tau_min"] = tau_min_fractal(
             *popt,
         )
@@ -860,10 +854,6 @@ def fit_occupation_probability(
         for i, attr in enumerate(var_names):
             occupation_parameters[attr] = popt[i]
             occupation_parameters[f"{attr}_err"] = perr[i]
-        # occupation_parameters["beta"] = 1.0 / occupation_parameters["gamma"]
-        # occupation_parameters["beta_err"] = (
-        #    abs(1.0 / occupation_parameters["gamma"] ** 2) * perr[0]
-        # )
         occupation_parameters["rms"] = rms
         occupation_parameters["var_reduction"] = var_reduction
     return occupation_parameters
