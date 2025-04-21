@@ -781,6 +781,14 @@ def fit_occupation_probability(
         occupation_parameters["tau_min"] = tau_min_fractal(
             *popt,
         )
+        #occupation_parameters["tau_min"] = tau_min_fractal2(
+        #    *popt,
+        #)
+        #print(
+        #        tau_min_fractal(*popt),
+        #        tau_min_fractal2(*popt)
+        #        )
+
         occupation_parameters["rms"] = rms
         occupation_parameters["var_reduction"] = var_reduction
     # -------------------------------------------------------------
@@ -1414,6 +1422,13 @@ def occupation_probability_fractal_model(tau, n, tau_c, alpha, log=False):
 def cdf_fractal(w, n, tau_c, alpha, lbd=1.0):
     A = (tau_c / w) ** (n * alpha)
     return 1.0 - n / lbd * (1. / w) * A * (1 + A) ** (-1 / alpha - 1)
+
+def tau_min_fractal2(n, tau_c, alpha):
+    log_theta_min = (
+            1. / (n * alpha) * np.log10((1. - n) / (1. + alpha))
+            + np.log10(tau_c)
+            )
+    return 10.**log_theta_min
 
 
 def tau_min_fractal(n, tau_c, alpha, lbd=1.0):
