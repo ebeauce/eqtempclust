@@ -2507,7 +2507,6 @@ def plot_gamma_vs_fractal(
     suptitle_y = 0.99 if plot_physical_wt else 0.98
     fig.suptitle(figtitle, y=suptitle_y)
 
-    # axes[1].set_title(r"Inter-event time pdf, $\rho_{\lambda W}$")
     axes[1].set_title(r"Inter-event time pdf, $\rho_{\Theta}$")
     axes[1].plot(
         wt_bins[valid_bins],
@@ -2524,16 +2523,11 @@ def plot_gamma_vs_fractal(
         alpha=0.25,
         color="C0",
     )
-    # axes[1].set_ylabel(r"Inter-event time pdf, $\rho_{\lambda W}$")
-    # axes[1].set_xlabel(r"Normalized inter-event time, $\lambda w$")
     axes[1].set_ylabel(r"Inter-event time pdf, $\rho_{\Theta}$")
     axes[1].set_xlabel(r"Normalized inter-event time, $\theta$")
 
-    # axes[0].set_title(r"Occupation probability, $\Phi(\lambda \tau)$")
     axes[0].set_title(r"Occupation probability, $\Phi(\theta)$")
     axes[0].plot(tau, Phi, marker="o", ls="", color="C0", label="Observed occupation")
-    # axes[0].set_ylabel(r"Occupation probability, $\Phi(\lambda \tau)$")
-    # axes[0].set_xlabel(r"Normalized time interval length, $\lambda \tau$")
     axes[0].set_ylabel(r"Occupation probability, $\Phi(\theta)$")
     axes[0].set_xlabel(r"Normalized time interval length, $\theta$")
 
@@ -2600,7 +2594,6 @@ def plot_gamma_vs_fractal(
         f"Fractal model:\n"
         r"$D_\tau=$"
         f"{1. - occupation_parameters['n']:.2f}, "
-        # r"$\tau_c=$"
         r"$\theta_c=$"
         f"{occupation_parameters['tau_c']:.2f}, "
         r"$\alpha=$"
@@ -2622,7 +2615,6 @@ def plot_gamma_vs_fractal(
             1.0 - np.exp(-tau),
             color="dimgrey",
             lw=0.75,
-            # label=r"Poisson: $1 - e^{-\lambda \tau}$",
             label=r"Poisson: $1 - e^{-\theta}$",
         )
         axes[1].plot(
@@ -2630,7 +2622,6 @@ def plot_gamma_vs_fractal(
             np.exp(-wt_bins),
             color="dimgrey",
             lw=0.75,
-            # label=r"Poisson: $e^{-\lambda w}$",
             label=r"Poisson: $e^{-\theta}$",
         )
 
@@ -2641,7 +2632,6 @@ def plot_gamma_vs_fractal(
 
     for i, ax in enumerate(axes):
         ax.grid()
-        # ax.loglog()
         ax.text(
             0.01,
             0.99,
@@ -2667,9 +2657,6 @@ def plot_gamma_vs_fractal(
         ax_real_time.set_xscale("log")
         ax_real_time.tick_params(axis="x", which="both", direction="in", pad=0.5)
         ax_real_time.set_xlabel(r"Inter-event time, $w$", labelpad=-35)
-        #ax_real_time.set_xticklabels(
-        #        ax_real_time.get_xticklabels(), labelpad=1.
-        #        )
 
     if ot_time_series is not None:
         ot_time_series = np.sort(np.asarray(ot_time_series))
@@ -2682,7 +2669,6 @@ def plot_gamma_vs_fractal(
                 rasterized=True,
         )
         axes[2].set_yscale("log")
-        #axes[2].set_title("Template {tid} + {DELTA_R_KM:.1f}km-neighborhood return times")
         axes[2].set_ylabel("Inter-event time (s)")
         axes[2].set_xlabel("Origin time (s)")
 
