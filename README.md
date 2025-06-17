@@ -13,6 +13,6 @@ This package accompanies the following manuscript:<br>
 submitted to *Geophysical Journal International*, by Eric Beaucé<br>
 
 <p align="center">
-<img src="data/fig1_intro.png" width=400>
+<img src="data/readme.png" width=400>
 </p><br><br><br><br>
 
