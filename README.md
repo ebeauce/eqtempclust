@@ -6,7 +6,11 @@
 ![](https://img.shields.io/github/stars/ebeauce/eqtempclust?style=social)
 
 
-Package for the analysis of occupation probability and inter-event times in statistical seismology.
+Package for the analysis of occupation probability and inter-event times in statistical seismology.<br>
+
+This package accompanies the following manuscript:<br>
+**Measuring and modeling the occupation probability to characterize the temporal statistics of seismic sequences**,<br>
+submitted to *Geophysical Journal International*, by Eric Beaucé<br>
 
 <p align="center">
 <img src="data/fig1_intro.png" width=400>
