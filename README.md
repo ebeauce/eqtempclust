@@ -7,3 +7,8 @@
 
 
 Package for the analysis of occupation probability and inter-event times in statistical seismology.
+
+<p align="center">
+<img src="data/fig1_intro.png" width=400>
+</p><br><br><br><br>
+
