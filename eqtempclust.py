@@ -1144,7 +1144,7 @@ def fit_interevent_pdf(
         "n_max": 1.0,
         "alpha_min": 0.25,
         "alpha_max": 5.00,
-        "gamma_min": 0.0,
+        "gamma_min": 0.0 + 1.e-5,
         "gamma_max": 1.0,
         "beta_min": 0.0,
         "beta_max": np.inf,
