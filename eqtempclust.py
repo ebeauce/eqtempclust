@@ -171,7 +171,7 @@ def compute_occupation_probability(
     normalized_tau, nbins = build_time_intervals(
         normalized_time_range, normalized_tau_min, normalized_tau_max, base_log=base_log
     )
-    print(f"Inside compute_occ: largest time interval is: {normalized_tau.max():.2f}")
+    #print(f"Inside compute_occ: largest time interval is: {normalized_tau.max():.2f}")
     # -------------------------------
     rescaled_eq_timings = (normalized_eq_timings - min_normalized_eq_timing) / (
         max_normalized_eq_timing - min_normalized_eq_timing
