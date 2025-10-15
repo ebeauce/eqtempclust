@@ -1187,7 +1187,8 @@ def fit_interevent_pdf(
                     (param_bounds["gamma_min"], param_bounds["gamma_max"]),
                 ]
         else:
-            p0 = [gamma0, 1.0 / gamma0]
+            #p0 = [gamma0, 1.0 / gamma0]
+            p0 = [gamma0, 1.0]
             model_kwargs["normalized"] = False
             model = lambda w, gamma, beta: gamma_waiting_times(
                 w, gamma, beta=beta, **model_kwargs
@@ -1956,6 +1957,7 @@ def run_occupation_analysis1(
             loss=loss_pdf,
         )
         output["beta"] = 1.0 / output["gamma"]
+        output["beta_err"] = output["gamma_err"] / output["gamma"]**2
     else:
         (
             output["gamma"],
@@ -2037,8 +2039,9 @@ def run_occupation_analysis1(
         C="theoretical",
     )
     num_params = 1 if fix_beta else 2
+    output["loglikelihood_wt_gamma"] = np.sum(np.log(model(normalized_waiting_times)))
     output["aic_gamma"] = compute_aic(
-        normalized_waiting_times, model, num_params=num_params
+        output["loglikelihood_wt_gamma"], num_params=num_params
     )
     if np.isinf(output["aic_gamma"]):
         # very few waiting times fell in the tested range of normalized tau
@@ -2144,7 +2147,7 @@ def run_occupation_analysis2(
     output["Phi_lower"] = Phi_lower
     output["Phi_upper"] = Phi_upper
     output["tau"] = tau
-    print(f"Largest time interval is: {tau.max():.2e}")
+    #print(f"Largest time interval is: {tau.max():.2e}")
 
     # fit gamma model to occupation probability
     _, _, _, _, gamma_model_parameters = occupation_analysis(
